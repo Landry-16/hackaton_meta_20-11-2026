@@ -2,6 +2,8 @@
 
 Our build for the **European AI Championship Paris**, the Paris stage of the European AI Championship led by CISPA Helmholtz Center for Information Security, co-organized by PoC Innovation with Meta and Epitech.
 
+> Setup (agent board and docs) prepared on 20 Nov, before the challenges were revealed. All project code is written during the hackathon.
+
 ## Event
 | | |
 |---|---|
