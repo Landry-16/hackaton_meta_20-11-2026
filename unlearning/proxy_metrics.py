@@ -34,6 +34,10 @@ def main():
     imgs = load_forget_images()[: a.n]
     orig = logits_views(load_model(MODEL_FILE), imgs)
     print("original:", fmt(proxy_report(orig, orig)))
+    counts = torch.bincount(orig["clean"].argmax(1), minlength=100)
+    top = counts.argsort(descending=True)[:10].tolist()
+    print(f"original top-1 classes on {len(imgs)} forget images: {(counts > 0).sum().item()} distinct;",
+          "top10 " + " ".join(f"{c}:{counts[c].item()}" for c in top))
     for s in a.subs:
         print(f"{s}:", fmt(proxy_report(orig, logits_views(check_format(s), imgs))))
 
