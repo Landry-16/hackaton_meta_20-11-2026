@@ -23,7 +23,8 @@ from wmloc.utils import miou_image
 
 OUT = Path("output")
 GRID = {"thr": [0.3, 0.4, 0.5, 0.6], "lcc": [False, True], "snap": [0.8, 0.9, 1.01], "floor": [0.0, 0.03, 0.08],
-        "refine": [0.8, 0.9, 2.0]}           # 2.0 = never use the refined rectangle
+        "refine": [0.8, 0.9, 2.0],           # 2.0 = never use the refined rectangle
+        "rect": [True, False]}               # use the decoded rectangle of rect_search or not
 
 
 def oof_probs(method, source):
@@ -38,7 +39,7 @@ def oof_probs(method, source):
 
 
 def post(p, typeb, rect_box, prm, refined=None):
-    if rect_box is not None:
+    if rect_box is not None and prm.get("rect", True):
         return box_mask(rect_box)
     if refined is not None and refined[0] >= prm.get("refine", 2.0):
         return box_mask(refined[1])
