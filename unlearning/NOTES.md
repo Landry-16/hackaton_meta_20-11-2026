@@ -153,3 +153,14 @@ Result format: command | clean loss (std), acc | aug loss, acc | ext agree, ext 
   B (--alpha 3), init-LFSSD e20.
 - Diagnostic C (Philibert): is forget_images.npz class-sorted? All local metrics use the first 1000 images; if
   sorted they cover ~8 classes and are biased -> switch --eval-n to a random subset.
+
+## Round 2 results (22 Nov, 00:50)
+- Seed gap: seed 1 raw 0.2701 vs seed 0 raw 0.2706 -> gaps >= ~0.005 are real.
+- Head scale on the 0.2706 checkpoint: 1.25 = **0.304** (best), 1.5 = 0.2786 -> scan stopped at 1.25.
+- A raw (--clean-frac 0.2, 35 ep) = 0.2853 vs 0.2706: real gain (augmented copies forgotten closer to clean ones).
+- init-LFSSD e20 = 0.2411 vs 0.2402 (ext agree 0.795 vs 0.83): small agreement drops cost nothing measurable.
+- mask45 (head.bias -10 on the 45 forget classes) = **0.0** (utility gate): the 45 classes are NOT removed;
+  gold models still predict them; the original's runner-up stays the right target even when it is a forget class.
+- B raw (--alpha 3) dropped from the queue: weaker forgetting (loss 3.86) mixed with better retain (KL 0.067).
+- Server cooldown is now 10 min (6 submissions/hour); submitter runs with --cooldown 610.
+- Pending: A + head 1.25 (clean 5.32, aug 4.64, ext agree 0.83, KL 0.137).
