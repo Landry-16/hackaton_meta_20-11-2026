@@ -179,9 +179,9 @@ def main():
     if a.copypaste:
         cp = CopyPaste(a.method, images, masks, full, tr, np.random.default_rng(1))
         name += f"_cp{a.copypaste}"
+        print(f"+ {a.copypaste} copy-paste samples per epoch, {len(cp.carriers)} clean carriers, {len(cp.donors)} type A donors", flush=True)
     if a.scales != "1":
         name += "_ms" + a.scales.replace(",", "-").replace(".", "p")
-        print(f"+ {a.copypaste} copy-paste samples per epoch, {len(cp.carriers)} clean carriers, {len(cp.donors)} type A donors", flush=True)
     history, t0, probs = [], time.time(), None
     for epoch in range(1, a.epochs + 1):
         model.train()
