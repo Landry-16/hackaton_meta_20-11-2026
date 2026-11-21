@@ -127,6 +127,8 @@ def main():
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--synth", type=int, default=0, help="synthetic samples per method per epoch")
+    ap.add_argument("--synth-set", default="synthv2")
     ap.add_argument("--no-flip", action="store_true", help="no flip augmentation or TTA (StegaStamp decoding dies under flips)")
     ap.add_argument("--save-methods", default=",".join(METHODS), help="with --fold all: methods whose test probabilities to write")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -143,16 +145,30 @@ def main():
 
     model = RealSegmenter(pretrained=not a.limit).to(a.device)
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4)
-    steps = a.epochs * ((len(tr) + a.batch - 1) // a.batch)
+    synth = {}
+    if a.synth:
+        for k, m in enumerate(METHODS):
+            z = np.load(OUT / f"{a.synth_set}_{m}.npz")
+            onehot = np.zeros(len(METHODS) + 1, np.float32); onehot[k] = 1
+            ex = np.stack([onehot] * len(z["kinds"])); ex[:, -1] = np.where(z["kinds"] == "full", 0.97, 0.53)
+            synth[m] = (z["images"], z["masks128"], ex)
+        name += f"_{a.synth_set}{a.synth}"
+    steps = a.epochs * ((len(tr) + a.synth * len(synth) + a.batch - 1) // a.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=steps, pct_start=0.1)
     history, t0 = [], time.time()
     for epoch in range(1, a.epochs + 1):
         model.train()
-        losses, order = [], rng.permutation(tr)
+        order = [(None, i) for i in rng.permutation(tr)]
+        for m, (si, _, _) in synth.items():
+            order += [(m, i) for i in rng.choice(len(si), a.synth, replace=False)]
+        order = [order[k] for k in rng.permutation(len(order))]
+        losses = []
         for i in range(0, len(order), a.batch):
-            b = order[i:i + a.batch]
-            x, y = batch_x(images[b], a.device), torch.from_numpy(masks[b]).float().to(a.device)
-            e = torch.from_numpy(extra[b]).to(a.device)
+            chunk = order[i:i + a.batch]
+            get = lambda real, j: np.stack([real[q] if m is None else synth[m][j][q] for m, q in chunk])
+            x = batch_x(get(images, 0), a.device)
+            y = torch.from_numpy(get(masks, 1)).float().to(a.device)
+            e = torch.from_numpy(get(extra, 2)).to(a.device)
             if not a.no_flip and rng.random() < 0.5:
                 x, y = x.flip(-1), y.flip(-1)
             if not a.no_flip and rng.random() < 0.5:
