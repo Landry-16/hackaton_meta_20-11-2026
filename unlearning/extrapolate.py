@@ -11,7 +11,7 @@ from pathlib import Path
 
 import torch
 
-from task_template import MODEL_FILE, build_model, load_forget_images
+from task_template import DEVICE, MODEL_FILE, build_model, load_forget_images
 from ulib import fmt, kl_t, logits_views, proxy_report
 
 
@@ -27,7 +27,7 @@ def main():
 
     orig = torch.load(MODEL_FILE, map_location="cpu", weights_only=True)
     sub = torch.load(a.sub, map_location="cpu", weights_only=True)
-    model = build_model().eval()
+    model = build_model().to(DEVICE).eval()  # run with CUDA_VISIBLE_DEVICES= to stay on CPU on a login node
     if a.n:
         forget = load_forget_images()[: a.n]
         model.load_state_dict(orig)
