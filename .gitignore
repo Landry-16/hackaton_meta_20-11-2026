@@ -21,3 +21,4 @@ output/
 .venv/
 __pycache__/
 .idea/
+plots/
