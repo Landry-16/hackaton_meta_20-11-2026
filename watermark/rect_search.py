@@ -108,6 +108,14 @@ def load_cache(tag):
 
 
 # ---------------------------------------------------------------- masks, tuning, CV
+def auc_of(scores, labels):
+    """Probability that a random positive scores above a random negative (0.5 = chance)."""
+    pos, neg = scores[labels == 1], scores[labels == 0]
+    if len(pos) == 0 or len(neg) == 0:
+        return float("nan")
+    return float((pos[:, None] > neg[None, :]).mean() + 0.5 * (pos[:, None] == neg[None, :]).mean())
+
+
 def box_mask(box):
     m = np.zeros((SIZE, SIZE), np.uint8)
     y0, y1, x0, x1 = box
