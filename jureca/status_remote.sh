@@ -40,7 +40,7 @@ echo "${B}Your node${N} ${D}($USER)${N}"
 if [ -n "$hold" ]; then
   node=$(squeue -j "$hold" -h -o %N)
   echo "  job $hold on $node"
-  srun --jobid="$hold" --overlap --ntasks=1 nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null |
+  srun --jobid="$hold" --overlap --ntasks=1 nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null < /dev/null |
   while IFS=', ' read -r i u mu mt; do
     n=$((u / 5)); g=""; for j in $(seq 1 20); do [ "$j" -le "$n" ] && g+="#" || g+="."; done
     [ "$u" -gt 0 ] && col=$G || col=$D
@@ -53,9 +53,40 @@ else
 fi
 echo
 
-# ---- watermark progress
-echo "${B}Watermark progress${N} ${D}(last line of each log)${N}"
-for f in "$WM"/output/synth_*.log; do [ -f "$f" ] && printf "  %-22s %s\n" "$(basename "$f" .log)" "$(grep -E 'samples|Error|error' "$f" | tail -1)"; done
-for f in $(ls -t /p/scratch/training2666/savarimuthu1/teambuilders/code/savarimuthu1/logs/*.out 2>/dev/null | head -5); do
-  printf "  %-22s %s\n" "$(basename "$f" .out | cut -c1-22)" "$(grep -v -i -E 'warn|Fetching|Model loaded|state_dict|^\s*$' "$f" | tail -1 | cut -c1-110)"
+# ---- team GPU queue (jureca/gpu_queue.sh on the team node)
+Q=/p/scratch/training2666/savarimuthu1/teambuilders/queue
+now=$(date +%s)
+what() {   # short description of a queued command: script name + its arguments
+  grep '^CMD=' "$1" | sed -e 's/\\ / /g' -e 's/^CMD=//' | grep -oE '[a-z_]+\.py.*|python .*|bash .*' | sed -e 's#^.*/##' | cut -c1-70
+}
+lastline() { grep -v -i -E 'warn|Fetching|Model loaded|state_dict|^\s*$|^\s+(warnings|checkpoint|return|state)' "$1" 2>/dev/null | tail -1 | cut -c1-95; }
+echo "${B}Team GPU queue${N} ${D}(one node for the team; submit with: bash jureca/gpu_submit.sh \"cmd\")${N}"
+echo "  ${G}running${N}"
+any=0
+for j in "$Q"/running/*.job; do [ -e "$j" ] || continue
+  n=$(basename "$j" .job); any=1
+  owner=$(grep '^OWNER=' "$j" | cut -d= -f2)
+  gpu=$(head -1 "$Q/running/$n.log" 2>/dev/null | grep -oE 'GPU [0-9]+')
+  el=$(( (now - $(stat -c %Y "$j")) / 60 ))
+  printf "    %-13s %-6s %3s min  %-44s\n" "$owner" "${gpu:-GPU ?}" "$el" "$(what "$j")"
+  printf "      ${D}%s${N}\n" "$(lastline "$Q/running/$n.log")"
 done
+[ "$any" = 0 ] && echo "    ${D}nothing running${N}"
+echo "  ${Y}waiting${N} ${D}(starts in this order; teammates' jobs go before Landry's)${N}"
+k=0
+for j in $(ls -tr "$Q"/pending/*.job 2>/dev/null); do
+  k=$((k + 1)); [ "$k" -gt 12 ] && { echo "    ... $(ls "$Q"/pending/*.job | wc -l) waiting in total"; break; }
+  printf "    %2d. %-13s %s\n" "$k" "$(grep '^OWNER=' "$j" | cut -d= -f2)" "$(what "$j")"
+done
+[ "$k" = 0 ] && echo "    ${D}empty${N}"
+echo "  ${D}finished (last 6)${N}"
+ls -t "$Q"/done/*.job 2>/dev/null | head -n 6 | while read -r j; do
+  n=$(basename "$j" .job); l="$Q/done/$n.log"
+  rc=$(grep -oE 'exit code [0-9]+' "$l" 2>/dev/null | tail -1 | grep -oE '[0-9]+$')
+  [ "${rc:-x}" = 0 ] && col=$G || col=$R
+  res=$(grep -E 'held-out|wrote|share|Score|Traceback|Error' "$l" 2>/dev/null | tail -1 | cut -c1-70)
+  printf "    ${col}%-4s${N} %-13s %-40s ${D}%s${N}\n" "${rc:-?}" "$(grep '^OWNER=' "$j" | cut -d= -f2)" "$(what "$j" | cut -c1-40)" "$res"
+done
+echo
+echo "${D}scratch inodes (whole hackathon): $(df --output=iused,iavail /p/scratch/training2666 | tail -1 | awk '{printf "%d used, %d free", $1, $2}')${N}"
+echo "${D}full log of a job: bash jureca/gpu_submit.sh log <name>   (names: ls $Q/running $Q/pending)${N}"
