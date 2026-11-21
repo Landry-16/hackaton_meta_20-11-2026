@@ -113,9 +113,10 @@ def main():
     rng = np.random.default_rng(0)
     from wmloc.watermarks import load_watermark
     print(f"device {a.device}, cuda available {torch.cuda.is_available()}", flush=True)
-    images, masks, methods, extra, full, _ = load_split("train", a.limit)
+    images, masks, methods, extra, full, names = load_split("train", a.limit)
     sel = np.flatnonzero(methods == a.method)
     images, masks, methods, full, extra = images[sel], masks[sel], methods[sel], full[sel], extra[sel][:, -1:]
+    names = [names[i] for i in sel]
     fold = folds_of(methods, full)
     tr = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold != int(a.fold))
     ev = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold == int(a.fold))
@@ -148,7 +149,7 @@ def main():
             x = batch_x(pick(images, s_img if a.synth else None), a.device)
             y = torch.from_numpy(pick(masks, s_mask if a.synth else None)).float().to(a.device)
             e = torch.from_numpy(pick(extra, s_extra if a.synth else None)).to(a.device)
-            if rng.random() < 0.5:
+            if a.method != "stegastamp" and rng.random() < 0.5:     # StegaStamp decoding dies under a horizontal flip
                 x, y = x.flip(-1), y.flip(-1)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=a.device == "cuda"):
                 loss = loss_fn(model(x, e).float(), y)
@@ -170,6 +171,7 @@ def main():
     if a.fold != "all":
         plots(name, [(h[0], h[1], {m: h[2].get(m, (np.nan,) * 3) for m in ("pixelseal", "trustmark", "stegastamp")}) for h in history],
               images[ev], masks[ev], probs, methods[ev], full[ev])
+        np.savez(OUT / f"oof_{name}.npz", names=np.array(names)[ev], probs=probs.astype(np.float16))   # for post-processing CV
         return
     t_img, _, t_methods, t_extra, _, t_names = load_split("test")
     s = t_methods == a.method
