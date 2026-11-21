@@ -11,14 +11,23 @@ Project `training2666`, reservation `cispahack`, partition `dc-gpu`. Official gu
 ```bash
 mkdir -p ~/hackathon-scripts && cd ~/hackathon-scripts
 wget https://huggingface.co/datasets/SprintML/hackathon/resolve/main/hackathon_setup.sh -O hackathon_setup.sh
-nano hackathon_setup.sh   # fill TEAM_LEAD, TEAMMATE_1..3 (Juelich usernames), TEAM_FOLDER
+for u in <user2> <user3> <user4>; do id "$u" >/dev/null && echo "ok $u"; done   # a wrong name aborts the script at the ACL step
+nano hackathon_setup.sh   # fill TEAM_LEAD, TEAMMATE_1..3 (Juelich usernames that printed ok), TEAM_FOLDER
 source hackathon_setup.sh
 ```
-Then check that every task has its venv (the script skips a failed task and keeps going):
+Only teammates whose username already works can be listed; add late ones afterwards with section 6 of the official README.
+
+The script only builds a venv when the dataset root has a `requirements.txt`. The watermark one is inside `starter_kit.zip`, so build it by hand (Python 3.11, as the kit is tested with torch 2.5.1):
+```bash
+cd /p/scratch/training2666/$USER/<team>/Hackathon_Watermark_Localisation_Task
+unzip -o starter_kit.zip
+uv venv -p 3.11 .venv && VIRTUAL_ENV=$PWD/.venv uv pip install -r requirements.txt
+```
+Then check the three venvs and post the result on the board:
 ```bash
 ls -d /p/scratch/training2666/$USER/<team>/*/.venv
 ```
-Expected: `Hackathon_Watermark_Localisation_Task/.venv`, `model_equality/.venv`, `unlearning/.venv`. Post the result on the board.
+Expected: `Hackathon_Watermark_Localisation_Task/.venv`, `model_equality/.venv`, `unlearning/.venv`.
 
 ## 2. Every other teammate, after the lead is done
 ```bash
@@ -39,6 +48,7 @@ git clone https://github.com/Landry-16/hackaton_meta_20-11-2026.git $USER && cd 
 mkdir -p logs
 ```
 Each person works in their own clone (`$TEAM_DIR/code/$USER`), the data stays in the task folders.
+To push from JURECA, log in with agent forwarding (`ssh -A <user>@jureca.fz-juelich.de`) and switch the remote to SSH: `git remote set-url origin git@github.com:Landry-16/hackaton_meta_20-11-2026.git`.
 
 ## 4. Every login
 ```bash
