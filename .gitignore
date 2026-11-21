@@ -9,6 +9,7 @@
 *.zip
 *.onnx
 release/
+data/
 models/
 *answers*.jsonl
 submission*.csv
