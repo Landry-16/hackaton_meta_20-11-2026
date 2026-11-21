@@ -79,3 +79,19 @@ JURECA commands (clone at `$TEAM_DIR/code/ravelonahina1`, data/checkpoints at `$
 - queue a checkpoint: `echo $TEAM_DIR/unlearning/out/<file>.pt >> logs/queue.txt`
 - submitter (login node): `nohup $TEAM_DIR/unlearning/.venv/bin/python unlearning/submit_queue.py > logs/submit_queue.out 2>&1 &`
 - scores: `column -s, -t < logs/submissions.csv`
+
+## Literature cross-check (21 Nov evening)
+Our setting = no retain set, no labels, match retrained models. Closest work:
+- RKLU (ESANN 2026, retain-free): fine-tune with KL to a *modified* target distribution on the forget set only.
+  Same family as our method A (soft-target distillation) -> independent support for the approach.
+- LFSSD, Loss-Free Selective Synaptic Dampening (Foster et al., ICLR 2024 tiny, arXiv 2402.19308; SSD AAAI 2024,
+  arXiv 2308.07707): no training, no labels. Importance of each weight = gradient of ||output||_2 on forget images vs
+  on general data; weights much more important for the forget set get dampened. Seconds of GPU. Candidate method B,
+  or a warm start before distillation; general-data importance can come from external_images.npz.
+- Learning to Unlearn, instance-wise (Cha et al., AAAI 2024, arXiv 2301.11578): forget set only; adversarial examples
+  of forget points as retain proxy + continual-learning weight-importance regulariser.
+- Label-Agnostic Forgetting (Shen et al., ICLR 2024, arXiv 2404.00506): label-free; contrastive loss keeps
+  representations of remaining data aligned with the original.
+- NeurIPS 2023 unlearning competition findings (Triantafillou et al., arXiv 2406.09073): evaluation also compares
+  output distributions to retrained models; top entries combine re-initialisation / noise of some layers with
+  distillation on the retain set and forget-remember cycles (they had a retain set, we use external images instead).
