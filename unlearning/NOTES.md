@@ -49,3 +49,33 @@ Baselines worth knowing: NegGrad+ (β·CE_retain − (1−β)·CE_forget, β≈0
 2. Method A: soft-target distillation on last k blocks + head, L2 anchor, checkpoints along the way (rewind).
 3. Method B: SCRUB-style alternating max/min with a proxy retain set, then rewind.
 4. Submit the most conservative checkpoint first (stay above the 70 % gate), post every submission on the board.
+
+## Status (21 Nov, 18:30) - read this first when resuming
+Code (branch `claude/dazzling-heisenberg-cdsx58`): `unlearn_distill.py` (method A), `proxy_metrics.py`, `ulib.py`,
+`submit_queue.py` (auto-submits `logs/queue.txt`, one per ~6 min cooldown, scores in `logs/submissions.csv`).
+
+Facts from JURECA:
+- Forget set: 45 classes, ~130 images each (selective unlearning, not class unlearning). Original fits it perfectly
+  (clean loss 0.0003, acc 1.0; 0.988 under augmentation).
+- An epoch of distillation takes ~8 s on one A100: a 25-30 epoch run is ~5 min. JURECA queue is the bottleneck
+  (use `sbatch -J hold jureca/hold.sh` and run inside it, see jureca/run.sh).
+- Server cooldown between unlearning submissions: ~360 s.
+
+Public scores (forget-set proxies at the submitted epoch, pseudo-labels = original argmax):
+| checkpoint | acc | loss mean / std | public |
+|---|---|---|---|
+| original | 1.00 | 0.0003 / 0.002 | 0.0 |
+| tc0.3 lr2e-5 e4 | 1.00 | 0.015 / 0.08 | 0.0016 |
+| tc0.5 lr1e-4 e30 | 0.99 | 0.18 / 0.15 | 0.0108 |
+| tc0.3 lr5e-5 e30 | 0.79 | 0.50 / 0.43 | 0.0308 |
+
+Reading: more forgetting = higher score so far; gold loss on the forget set is probably well above 0.5.
+Per-image caps (`--conf-min/--conf-max`, harder images under strong augmentation get lower caps) give a loss std
+larger than the mean, closer to a never-seen model. Queued / next: cr0.1-0.8 e25 (loss 0.44, std 0.63), then much
+stronger caps (cr0.05-0.5, cr0.03-0.35, cr0.02-0.2) to bracket the gold level. Watch the 70 % gate (score 0).
+
+JURECA commands (clone at `$TEAM_DIR/code/ravelonahina1`, data/checkpoints at `$TEAM_DIR/unlearning/out/`):
+- run: `sbatch -J unl-X jureca/job.sh unlearning unlearning/unlearn_distill.py --conf-min 0.05 --conf-max 0.5 --lr 1e-4 --epochs 25 --save-every 5`
+- queue a checkpoint: `echo $TEAM_DIR/unlearning/out/<file>.pt >> logs/queue.txt`
+- submitter (login node): `nohup $TEAM_DIR/unlearning/.venv/bin/python unlearning/submit_queue.py > logs/submit_queue.out 2>&1 &`
+- scores: `column -s, -t < logs/submissions.csv`
