@@ -23,4 +23,12 @@ if [ -n "$hold" ]; then
   "${ssh_cmd[@]}" "$host" "source ~/.bashrc; cd $remote && mkdir -p logs && srun --jobid=$hold --overlap --ntasks=1 env LAUNCH= HF_HUB_OFFLINE=1 REPO_DIR=\$PWD CUDA_VISIBLE_DEVICES=${GPU:-0} bash jureca/job.sh $* 2>&1 | tee logs/$name-hold-\$(date +%H%M%S).out | grep -v -i -E 'warn|Fetching|Model loaded|state_dict'"
   exit
 fi
+# organizers' rule: at most ONE node per person at a time (pending jobs count), or jobs get cancelled and access revoked
+mine="$("${ssh_cmd[@]}" "$host" "squeue -u $user -h -o '%i %j %T'")"
+if [ -n "$mine" ]; then
+  echo "refused: you already have a job on JURECA (one node per person at a time):" >&2
+  echo "$mine" >&2
+  echo "wait for it, or run inside it (sbatch -J hold jureca/hold.sh)." >&2
+  exit 1
+fi
 "${ssh_cmd[@]}" "$host" "source ~/.bashrc; cd $remote && mkdir -p logs && j=\$(sbatch --parsable -J $name jureca/job.sh $*) && echo job \$j && while squeue -h -j \$j | grep -q .; do sleep 10; done; grep -v -i -E 'warn|Fetching|Model loaded' logs/$name-\$j.out; grep -i -E 'error|traceback' -A5 logs/$name-\$j.err | tail -20"
