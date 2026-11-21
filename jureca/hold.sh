@@ -10,6 +10,7 @@
 #SBATCH --output=logs/%x-%j.out
 #
 # Keep one whole GPU node (4 A100) for the night, so later runs start at once instead of queueing.
+# Organizers: ONE node per person at a time (pending jobs count). Never submit a second job while this one exists.
 #   sbatch -J hold jureca/hold.sh       then jureca/run.sh uses it automatically while it runs.
 # Release it when done:  scancel <jobid>
 echo "holding $(hostname) since $(date -Is)"

@@ -81,3 +81,4 @@ python -c "from wmloc.data import unzip; unzip('train.zip', 'release'); unzip('t
 ## Gotchas
 - **GPU nodes have no internet.** Anything that downloads on first use (weights, pip, Hugging Face) must run once on the login node first, or the job dies with `Address family not supported by protocol`.
 - Default job time is 1 h; `jureca/job.sh` asks for 4 h.
+- **One node per person at a time** (pending jobs count). The organizers cancel extra jobs and revoke access after repeated offenses. `jureca/run.sh` refuses to queue a second job.
