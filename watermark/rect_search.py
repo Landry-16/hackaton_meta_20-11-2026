@@ -79,6 +79,8 @@ def search(wm, method, img, sign, stride):
 
 def run_search(split, limit, device, stride):
     from wmloc.watermarks import load_watermark
+    print(f"device {device}, cuda available {torch.cuda.is_available()}"
+          + (f" ({torch.cuda.get_device_name(0)})" if torch.cuda.is_available() else ""), flush=True)
     wms = {m: load_watermark(m, device=device) for m in METHODS}
     ds = LocalisationDataset("release", split)
     n = min(limit or len(ds), len(ds))
