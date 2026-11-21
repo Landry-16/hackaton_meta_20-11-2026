@@ -1,1 +1,21 @@
 .board/
+.env
+*.env
+
+# data, models and submissions stay on JURECA, never in this public repo
+*.pt
+*.pth
+*.npz
+*.zip
+*.onnx
+release/
+models/
+*answers*.jsonl
+submission*.csv
+!model_equality/practice_answers.csv
+
+# runs
+logs/
+output/
+.venv/
+__pycache__/
