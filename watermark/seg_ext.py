@@ -91,19 +91,22 @@ class ExtSegmenter(nn.Module):
 class CopyPaste:
     """New training samples made of REAL watermarks (training fold only): clean blobs pasted onto real type A images
     (new holes), and blobs of real type A images pasted into clean images (new transplanted objects)."""
-    def __init__(self, method, images, masks, full, tr, rng):
+    def __init__(self, method, images, masks, full, tr, rng, n_blobs=300, n_carriers=400):
         from synth import blob
-        self.blob, self.rng, self.images, self.masks = blob, rng, images, masks
+        self.rng, self.images, self.masks = rng, images, masks
         self.donors = [i for i in tr if full[i]]
         ds = [LocalisationDataset("release", s) for s in ("train", "test")]
-        self.carriers = [(d, i) for d in ds for i, m in enumerate(d.meta) if m["method"] != method]
+        pool = [(d, i) for d in ds for i, m in enumerate(d.meta) if m["method"] != method]
+        pick = rng.choice(len(pool), min(n_carriers, len(pool)), replace=False)
+        self.carriers = [pool[k][0][pool[k][1]]["image"] for k in pick]           # preloaded once (speed)
+        self.blobs = [blob(rng, rng.uniform(0.03, 0.3)).astype(bool) for _ in range(n_blobs)]
 
     def sample(self):
         r = self.rng
         d = self.donors[r.integers(len(self.donors))]
-        dset, ci = self.carriers[r.integers(len(self.carriers))]
-        clean = dset[ci]["image"]
-        b = self.blob(r, r.uniform(0.03, 0.3)).astype(bool)
+        clean = self.carriers[r.integers(len(self.carriers))]
+        b = self.blobs[r.integers(len(self.blobs))]
+        b = np.roll(b[:, ::-1] if r.random() < 0.5 else b, r.integers(-96, 97, 2), axis=(0, 1))
         b128 = b.reshape(128, 4, 128, 4).mean((1, 3)) >= 0.5
         if r.random() < 0.5:                       # new holes in a real watermarked image
             img = self.images[d].copy(); img[b] = clean[b]
