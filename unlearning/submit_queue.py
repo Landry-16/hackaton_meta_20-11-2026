@@ -12,6 +12,8 @@ import argparse
 import csv
 import os
 import re
+import socket
+import uuid
 import sys
 import time
 from datetime import datetime
@@ -50,6 +52,8 @@ def main():
     p.add_argument("--log", default="logs/submissions.csv")
     p.add_argument("--cooldown", type=int, default=365, help="seconds between two submissions")
     p.add_argument("--poll", type=int, default=30, help="seconds between queue checks when it is empty")
+    p.add_argument("--lock", default="logs/submit_queue.lock",
+                   help="single-instance lock: starting a new submitter makes any older one (any login node) exit")
     a = p.parse_args()
     key = os.environ.get("HACK_API_KEY", "")
     if not key:
@@ -62,8 +66,15 @@ def main():
         if new_log:
             csv.writer(f).writerow(["time", "file", "status", "score", "previous_best", "message"])
 
+    lock, token = Path(a.lock), f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+    lock.write_text(token)
+    print(f"submitter {token} started (queue {queue}, log {log})", flush=True)
+
     next_slot = 0.0
     while True:
+        if lock.read_text().strip() != token:
+            print(f"{datetime.now():%H:%M:%S} another submitter took the lock, exiting", flush=True)
+            return
         done = set()
         with log.open() as f:
             done = {row["file"] for row in csv.DictReader(f) if row["status"] == "success"
@@ -81,6 +92,9 @@ def main():
                                         "", "", "file not found"])
             continue
         time.sleep(max(0.0, next_slot - time.time()))
+        if lock.read_text().strip() != token:
+            print(f"{datetime.now():%H:%M:%S} another submitter took the lock, exiting", flush=True)
+            return
         print(f"{datetime.now():%H:%M:%S} submitting {path.name} ({len(todo) - 1} more queued)", flush=True)
         status, score, prev, msg, wait = submit(path, key)
         print(f"  -> {status} score={score} prev_best={prev} {msg}", flush=True)
