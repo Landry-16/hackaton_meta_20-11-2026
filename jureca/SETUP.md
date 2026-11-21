@@ -77,3 +77,7 @@ source .venv/bin/activate
 python $TEAM_DIR/code/$USER/watermark/download_models.py --models_dir $PWD/models
 python -c "from wmloc.data import unzip; unzip('train.zip', 'release'); unzip('test.zip', 'release')"   # with PYTHONPATH=$TEAM_DIR/code/$USER/watermark
 ```
+
+## Gotchas
+- **GPU nodes have no internet.** Anything that downloads on first use (weights, pip, Hugging Face) must run once on the login node first, or the job dies with `Address family not supported by protocol`.
+- Default job time is 1 h; `jureca/job.sh` asks for 4 h.
