@@ -95,3 +95,25 @@ Our setting = no retain set, no labels, match retrained models. Closest work:
 - NeurIPS 2023 unlearning competition findings (Triantafillou et al., arXiv 2406.09073): evaluation also compares
   output distributions to retrained models; top entries combine re-initialisation / noise of some layers with
   distillation on the retain set and forget-remember cycles (they had a retain set, we use external images instead).
+
+## Status (21 Nov, 22:10) - supersedes the 18:30 table
+Best public: **0.1869** = `unlearn_distill.py --conf-min 0.002 --conf-max 0.02 --external external_images.npz --lr 1e-4 --epochs 20`
+(forget acc 0.14, loss 2.80/1.63, held-out external agreement 0.82).
+
+| run (all with Imagenette anchor unless noted) | forget loss | ext agree | public |
+|---|---|---|---|
+| caps 0.05-0.5, no anchor | 0.85 | - | 0.0668 |
+| caps 0.05-0.5 | 0.93 | 0.85 | 0.0749 |
+| caps 0.03-0.35 | 1.35 | 0.84 | 0.1037 |
+| caps 0.02-0.2 | 1.96 | 0.84 | 0.1393 |
+| caps 0.01-0.1 | 2.29 | - | 0.1559 |
+| caps 0.005-0.05 | 2.64 | - | 0.1779 |
+| caps 0.002-0.02 | 2.80 | 0.82 | **0.1869** |
+| caps 0.02-0.2 + --other-tau 3 (spread wrong mass) | 0.73 (acc 0.98) | 0.85 | 0.0152 |
+
+Learned: (1) the external anchor helps at equal forgetting; (2) score rises monotonically with forgetting so far;
+(3) gold models put their mass on the original's runner-up (sibling) classes: spreading it kills the score;
+(4) caps 0.001-0.01 are unstable (less forgetting, agreement 0.80): 0.002-0.02 is the floor.
+Rules now: ONE node per team, GPU only via `jureca/gpu_submit.sh`, max 2 unlearning jobs queued (Mirado + Philibert).
+Submitter: `submit_queue.py --queue logs/queue_v2.txt --log logs/submissions_v2.csv` (single-instance lock).
+Never submit a checkpoint whose external agreement is below ~0.80 (70 % validation gate).
