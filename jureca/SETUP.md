@@ -33,22 +33,22 @@ Expected: `Hackathon_Watermark_Localisation_Task/.venv`, `model_equality/.venv`,
 ```bash
 mkdir -p ~/hackathon-scripts && cd ~/hackathon-scripts
 wget https://huggingface.co/datasets/SprintML/hackathon/resolve/main/teammate.sh -O teammate.sh
-nano teammate.sh   # TEAM_LEAD = Landry's Juelich username, TEAM_FOLDER = same as lead
+sed -i -e "s/^TEAM_LEAD=\"\"/TEAM_LEAD=\"savarimuthu1\"/" -e "s/^TEAM_FOLDER=\"\"/TEAM_FOLDER=\"teambuilders\"/" teammate.sh
 source teammate.sh
 ```
 Never run both scripts from the same account. Do not rebuild venvs or re-download data.
 
 ## 3. Everyone: repo and env on JURECA
 ```bash
-echo 'export TEAM_DIR=/p/scratch/training2666/<lead>/<team>' >> ~/.bashrc
+echo 'export TEAM_DIR=/p/scratch/training2666/savarimuthu1/teambuilders' >> ~/.bashrc
 echo 'export HACK_API_KEY=<team api key>' >> ~/.bashrc     # never commit it
 source ~/.bashrc
 mkdir -p $TEAM_DIR/code && cd $TEAM_DIR/code
-git clone https://github.com/Landry-16/hackaton_meta_20-11-2026.git $USER && cd $USER
+git clone git@github.com:Landry-16/hackaton_meta_20-11-2026.git $USER && cd $USER
 mkdir -p logs
 ```
+The repo is private: log in with agent forwarding (`ssh -A <user>@jureca.fz-juelich.de`, your GitHub SSH key loaded with `ssh-add`) so clone and push use your own GitHub key.
 Each person works in their own clone (`$TEAM_DIR/code/$USER`), the data stays in the task folders.
-To push from JURECA, log in with agent forwarding (`ssh -A <user>@jureca.fz-juelich.de`) and switch the remote to SSH: `git remote set-url origin git@github.com:Landry-16/hackaton_meta_20-11-2026.git`.
 
 ## 4. Every login
 ```bash
