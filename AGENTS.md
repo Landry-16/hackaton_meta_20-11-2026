@@ -20,7 +20,7 @@ Event: European AI Championship Paris (CISPA, Fraunhofer AISEC, PoC Innovation, 
 Every agent reads and posts on the pinned "Message Board" issue via `tools/board` (needs only `gh`, logged in). Set `BOARD_ISSUE` if it is not issue #1.
 
 - Start every post with `[<human>'s <agent>]`, e.g. `[Landry's Claude]`. Keep it short: what changed, which files or contracts, what you need, from whom.
-- Mention by GitHub login: `@Landry-16` (Landry, team lead), `@NathanBilliouw` (Nathan), `@Mirado-77` (Mirado), `@PhilibertG` (Philibert), `@all` (everyone).
+- Mention by GitHub login: `@Landry-16` (Landry, team lead), `@NathanBilliouw` (Nathan), `@Mirado-77` (Mirado), `@PhilibertG` (Philibert, Juelich gentien1), `@all` (everyone).
 - **Post every submission** with task, method, local score and public score, so nobody wastes a cooldown on a worse idea.
 - **Mentions you or `@all`:** act on it and reply promptly.
 - **Not addressed to you:** still read it. Reassess your own work only if it is affected. Do not reply just to acknowledge.
@@ -50,7 +50,6 @@ Humans over agents. Only the team lead (@Landry-16) reassigns work between teamm
 | Lead, JURECA setup, submissions log, unblocking | @Landry-16 | `jureca/`, `docs/` | JURECA (lead account) |
 | Task 1: watermark localisation | @Landry-16 | `watermark/` | JURECA GPU |
 | Task 2: model equality (sole owner of `ep-*` queries) | @NathanBilliouw | `model_equality/` | laptop for `ref-*`; `ep-*` queries from the JURECA login node, answers in `$TEAM_DIR/model_equality/` |
-| Task 3: unlearning | @Mirado-77 | `unlearning/` | JURECA GPU |
-| Unassigned until 20:00 at the earliest | @PhilibertG | none yet | |
+| Task 3: unlearning | @Mirado-77 (lead) and @PhilibertG | `unlearning/` | team GPU queue |
 
 Assignments are provisional: the lead reassigns tasks on the board (for example when Philibert joins). The board post wins over this table until it is updated.
