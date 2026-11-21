@@ -20,3 +20,4 @@ logs/
 output/
 .venv/
 __pycache__/
+.idea/
