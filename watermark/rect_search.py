@@ -92,8 +92,8 @@ def run_search(split, limit, device, stride):
         box, best = ((0, SIZE, 0, SIZE), full) if full >= SKIP_SEARCH_ABOVE else search(wms[m], m, img, sign, stride)
         for k, v in zip(rows, (it["image_name"], m, full, best, box)):
             rows[k].append(v)
-        if (i + 1) % 25 == 0 or i + 1 == n:
-            print(f"{split} {i + 1}/{n} images, {time.time() - t0:.0f} s", flush=True)
+        if n <= 25 or (i + 1) % 25 == 0 or i + 1 == n:
+            print(f"{split} {i + 1}/{n} images ({m}, full acc {full:.2f}, best crop {best:.2f}), {time.time() - t0:.0f} s", flush=True)
     OUT.mkdir(exist_ok=True)
     np.savez(OUT / f"rect_{split}.npz", **{k: np.array(v) for k, v in rows.items()})
     return load_cache(split)
