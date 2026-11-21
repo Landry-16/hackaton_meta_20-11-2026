@@ -1,6 +1,8 @@
 #!/bin/bash
 # From the laptop: copy this repo to your JURECA clone, run one script on a GPU node, wait, print the log.
 #   jureca/run.sh watermark watermark/regime.py [args...]
+# If a job named "hold" is running (sbatch -J hold jureca/hold.sh), the script runs inside it at once, on GPU $GPU
+# (default 0; give each parallel run its own: GPU=1 jureca/run.sh ...). Otherwise it queues a new job.
 # Needs the SSH master connection, opened once with your TOTP code:
 #   ssh -fN -M -S ~/.ssh/cm-jureca -o ControlPersist=10h -i ~/.ssh/judac-hack <juelich-user>@jureca.fz-juelich.de
 set -euo pipefail
@@ -15,4 +17,10 @@ rsync -a --exclude data --exclude .git --exclude .board --exclude .venv --exclud
   -e "${ssh_cmd[*]}" ./ "$host:/p/scratch/training2666/savarimuthu1/teambuilders/code/$user/"
 
 name="$(basename "${2%.py}")"
+hold="$("${ssh_cmd[@]}" "$host" "squeue -u $user -h -n hold -t RUNNING -o %i" | head -1)"
+if [ -n "$hold" ]; then
+  echo "running in hold job $hold on GPU ${GPU:-0}"
+  "${ssh_cmd[@]}" "$host" "source ~/.bashrc; cd $remote && mkdir -p logs && srun --jobid=$hold --overlap --ntasks=1 env LAUNCH= REPO_DIR=\$PWD CUDA_VISIBLE_DEVICES=${GPU:-0} bash jureca/job.sh $* 2>&1 | tee logs/$name-hold-\$(date +%H%M%S).out | grep -v -i -E 'warn|Fetching|Model loaded|state_dict'"
+  exit
+fi
 "${ssh_cmd[@]}" "$host" "source ~/.bashrc; cd $remote && mkdir -p logs && j=\$(sbatch --parsable -J $name jureca/job.sh $*) && echo job \$j && while squeue -h -j \$j | grep -q .; do sleep 10; done; grep -v -i -E 'warn|Fetching|Model loaded' logs/$name-\$j.out; grep -i -E 'error|traceback' -A5 logs/$name-\$j.err | tail -20"

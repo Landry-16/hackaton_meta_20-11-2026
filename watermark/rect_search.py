@@ -92,15 +92,16 @@ def run_search(split, limit, device, stride):
         box, best = ((0, SIZE, 0, SIZE), full) if full >= SKIP_SEARCH_ABOVE else search(wms[m], m, img, sign, stride)
         for k, v in zip(rows, (it["image_name"], m, full, best, box)):
             rows[k].append(v)
-        if (i + 1) % 25 == 0 or i + 1 == n:
-            print(f"{split} {i + 1}/{n} images, {time.time() - t0:.0f} s", flush=True)
+        if n <= 25 or (i + 1) % 25 == 0 or i + 1 == n:
+            print(f"{split} {i + 1}/{n} images ({m}, full acc {full:.2f}, best crop {best:.2f}), {time.time() - t0:.0f} s", flush=True)
     OUT.mkdir(exist_ok=True)
-    np.savez(OUT / f"rect_{split}.npz", **{k: np.array(v) for k, v in rows.items()})
-    return load_cache(split)
+    tag = f"{split}_quick" if limit else split          # quick checks never overwrite a full run
+    np.savez(OUT / f"rect_{tag}.npz", **{k: np.array(v) for k, v in rows.items()})
+    return load_cache(tag)
 
 
-def load_cache(split):
-    z = np.load(OUT / f"rect_{split}.npz")
+def load_cache(tag):
+    z = np.load(OUT / f"rect_{tag}.npz")
     return {k: z[k] for k in z.files}
 
 
@@ -257,7 +258,8 @@ def main():
     for name in ("regime", "rect"):
         print(f"  overall {name}: {np.mean([report[(m, name)][0] for m in METHODS]):.4f}")
     print("thresholds (regime, detection) fit on all train:", params)
-    (OUT / "rect_params.json").write_text(json.dumps(params))
+    if not a.limit:
+        (OUT / "rect_params.json").write_text(json.dumps(params))
     plots(cache, _Ordered(ds, order), report, opts, params, full)
 
 

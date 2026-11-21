@@ -26,7 +26,7 @@ case "$task" in
   *) echo "unknown task: $task (watermark | model_equality | unlearning)" >&2; exit 1 ;;
 esac
 
-repo="$SLURM_SUBMIT_DIR"
+repo="${REPO_DIR:-$SLURM_SUBMIT_DIR}"
 data="${TEAM_DIR:?set TEAM_DIR in ~/.bashrc}/$data_folder"
 
 source "$data/.venv/bin/activate"
@@ -35,5 +35,5 @@ export WMLOC_MODELS="$data/models"
 cd "$data"
 
 echo "task=$task data=$data host=$(hostname) start=$(date -Is)"
-srun python "$repo/$@"
+${LAUNCH-srun} python "$repo/$@"   # run.sh sets LAUNCH= inside the hold job
 echo "done $(date -Is)"
