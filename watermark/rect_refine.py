@@ -59,7 +59,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", default="train", choices=["train", "test"])
     ap.add_argument("--probs", default="oof", choices=["oof", "test"])
-    ap.add_argument("--source", default="pixelseal=synth400,trustmark=synth400,stegastamp=real")
+    ap.add_argument("--source", default="pixelseal=synth400,trustmark=synth400,stegastamp=real_noflip")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--limit", type=int, default=0)
     a = ap.parse_args()

@@ -29,7 +29,8 @@ GRID = {"thr": [0.3, 0.4, 0.5, 0.6], "lcc": [False, True], "snap": [0.8, 0.9, 1.
 def oof_probs(method, source):
     probs = {}
     for k in range(5):
-        f = OUT / (f"oof_ext_{method}_fold{k}_{source}.npz" if source != "real" else f"oof_real_fold{k}_noflip.npz")
+        # source: "synth400" / "synthv2400" (seg_ext) or "real<suffix>" (seg_real), e.g. real_noflip, real_synthv2300
+        f = OUT / (f"oof_real_fold{k}{source[4:]}.npz" if source.startswith("real") else f"oof_ext_{method}_fold{k}_{source}.npz")
         if f.exists():
             z = np.load(f)
             probs.update(dict(zip(z["names"].tolist(), z["probs"].astype(np.float32))))
@@ -83,7 +84,7 @@ def score_set(names, probs, gts, info, prm, use_rect=True):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", default="pixelseal=synth400,trustmark=synth400,stegastamp=real")
+    ap.add_argument("--source", default="pixelseal=synth400,trustmark=synth400,stegastamp=real_noflip")
     ap.add_argument("--apply", action="store_true")
     a = ap.parse_args()
     sources = dict(kv.split("=") for kv in a.source.split(","))
