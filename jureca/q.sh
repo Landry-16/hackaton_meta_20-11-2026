@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 host="${JURECA_USER:-savarimuthu1}@jureca.fz-juelich.de"
 ssh_cmd=(ssh -S "$HOME/.ssh/cm-jureca")
 if [ "$1" = wait ]; then
-  "${ssh_cmd[@]}" "$host" "source ~/.bashrc; while ls \$TEAM_DIR/queue/pending/*$2*.job \$TEAM_DIR/queue/running/*$2*.job >/dev/null 2>&1; do sleep 20; done; for f in \$(ls -tr \$TEAM_DIR/queue/done/*$2*.log); do echo \"== \$(basename \$f)\"; grep -E 'held-out|wrote|Traceback|Error|exit code' \$f | tail -3; done"
+  "${ssh_cmd[@]}" "$host" "source ~/.bashrc; Q=\$TEAM_DIR/queue; while ls \$Q/pending \$Q/running | grep -q -- '$2'; do sleep 20; done; for f in \$(ls -tr \$Q/done/*$2*.log); do echo == \$(basename \$f); grep -E 'held-out|wrote|Traceback|Error|exit code' \$f | tail -3; done"
   exit
 fi
 tag="$1"; shift
