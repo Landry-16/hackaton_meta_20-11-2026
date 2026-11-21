@@ -125,6 +125,7 @@ def main():
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--save-methods", default=",".join(METHODS), help="with --fold all: methods whose test probabilities to write")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
     torch.manual_seed(0)
@@ -176,10 +177,10 @@ def main():
         return
     t_img, _, t_methods, t_extra, _, t_names = load_split("test")
     probs = predict(model, t_img, t_extra, a.device).astype(np.float16)
-    for m in METHODS:
+    for m in a.save_methods.split(","):
         s = t_methods == m
         np.savez(OUT / f"seg_probs_{m}_test.npz", names=np.array(t_names)[s], probs=probs[s])
-    print("wrote seg_probs_<method>_test.npz for", METHODS, flush=True)
+    print("wrote seg_probs_<method>_test.npz for", a.save_methods, flush=True)
 
 
 if __name__ == "__main__":
