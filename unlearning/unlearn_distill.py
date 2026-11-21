@@ -32,6 +32,8 @@ def parse():
     p.add_argument("--n", type=int, default=0, help="use only the first n forget images (0 = all; debug)")
     p.add_argument("--eval-n", type=int, default=1000, help="images used for the per-epoch proxy report")
     p.add_argument("--out", default="out/distill", help="checkpoint prefix, relative to the data folder")
+    p.add_argument("--clean-frac", type=float, default=0.5, help="share of each forget batch left un-augmented")
+    p.add_argument("--save-every", type=int, default=1, help="save + report every N epochs (and at the last one)")
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args()
 
@@ -49,7 +51,7 @@ def trainable(model, k):
 def main():
     a = parse()
     torch.manual_seed(a.seed)
-    tag = f"tc{a.target_conf}_tau{a.tau}_a{a.alpha}_k{a.train_blocks}_lr{a.lr}"
+    tag = f"tc{a.target_conf}_tau{a.tau}_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_cf{a.clean_frac}"
     out = Path(a.out + "_" + tag)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -76,7 +78,9 @@ def main():
         t0, tot = time.time(), [0.0, 0.0]
         for idx in torch.randperm(len(imgs)).split(a.bs):
             x = preprocess(imgs[idx])
-            xf, xr = augment(x), proxy_retain(augment(x))
+            keep = torch.rand(len(x), device=x.device) < a.clean_frac
+            xf = torch.where(keep[:, None, None, None], x, augment(x))
+            xr = proxy_retain(augment(x))
             with torch.no_grad(), torch.autocast(**amp):
                 zf, zr = teacher(xf).float(), teacher(xr).float()
             with torch.autocast(**amp):
@@ -94,6 +98,9 @@ def main():
             sched.step()
             tot[0] += lf.item() * len(idx)
             tot[1] += lr_.item() * len(idx)
+        if ep % a.save_every and ep != a.epochs:
+            print(f"epoch {ep} ({time.time() - t0:.0f}s) forget_kl={tot[0] / len(imgs):.4f} retain_kl={tot[1] / len(imgs):.4f}", flush=True)
+            continue
         sd = {k: v.detach().cpu().float() for k, v in student.state_dict().items()}
         assert all(torch.isfinite(v).all() for v in sd.values()), "NaN/Inf in weights"
         path = Path(f"{out}_e{ep}.pt")
