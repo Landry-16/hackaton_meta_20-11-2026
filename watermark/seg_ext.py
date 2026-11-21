@@ -87,6 +87,7 @@ def main():
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--lr", type=float, default=1e-3, help="head; the extractor trunk gets lr / 10")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--synth", type=int, default=0, help="synthetic samples added per epoch (from output/synth_<method>.npz)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
     torch.manual_seed(0)
@@ -99,7 +100,7 @@ def main():
     fold = folds_of(methods, full)
     tr = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold != int(a.fold))
     ev = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold == int(a.fold))
-    name = f"ext_{a.method}_fold{a.fold}"
+    name = f"ext_{a.method}_fold{a.fold}" + (f"_synth{a.synth}" if a.synth else "")
     print(f"{name}: train {len(tr)} real images, judged on {len(ev)}", flush=True)
 
     wm = load_watermark(a.method, device="cpu")
@@ -107,16 +108,29 @@ def main():
     trunk = list(model.trunk.parameters())
     rest = [p for n, p in model.named_parameters() if not n.startswith("trunk.")]
     opt = torch.optim.AdamW([{"params": trunk, "lr": a.lr / 10}, {"params": rest, "lr": a.lr}], weight_decay=1e-4)
-    steps = a.epochs * ((len(tr) + a.batch - 1) // a.batch)
+    steps = a.epochs * ((len(tr) + a.synth + a.batch - 1) // a.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=[a.lr / 10, a.lr], total_steps=steps, pct_start=0.1)
+    if a.synth:
+        z = np.load(OUT / f"synth_{a.method}.npz")
+        s_img, s_mask = z["images"], z["masks128"]
+        s_extra = np.where(z["kinds"] == "full", 0.97, 0.53).astype(np.float32)[:, None]   # full-image decode, as measured on real data
+        print(f"+ {a.synth} synthetic samples per epoch out of {len(s_img)}", flush=True)
     history, t0, probs = [], time.time(), None
     for epoch in range(1, a.epochs + 1):
         model.train()
-        losses, order = [], rng.permutation(tr)
+        order = [("real", i) for i in rng.permutation(tr)]
+        if a.synth:
+            order += [("synth", i) for i in rng.choice(len(s_img), a.synth, replace=False)]
+            order = [order[k] for k in rng.permutation(len(order))]
+        losses = []
         for i in range(0, len(order), a.batch):
-            b = order[i:i + a.batch]
-            x, y = batch_x(images[b], a.device), torch.from_numpy(masks[b]).float().to(a.device)
-            e = torch.from_numpy(extra[b]).to(a.device)
+            chunk = order[i:i + a.batch]
+            pick = lambda real, syn: np.stack([real[j] if src == "real" else syn[j] for src, j in chunk])
+            x = batch_x(pick(images, s_img if a.synth else None), a.device)
+            y = torch.from_numpy(pick(masks, s_mask if a.synth else None)).float().to(a.device)
+            e = torch.from_numpy(pick(extra, s_extra if a.synth else None)).to(a.device)
+            if rng.random() < 0.5:
+                x, y = x.flip(-1), y.flip(-1)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=a.device == "cuda"):
                 loss = loss_fn(model(x, e).float(), y)
             opt.zero_grad(set_to_none=True)
