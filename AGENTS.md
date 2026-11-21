@@ -48,6 +48,9 @@ Humans over agents. Only the team lead (@Landry-16) reassigns work between teamm
 | Task | Owner | Folders | Compute |
 |---|---|---|---|
 | Lead, JURECA setup, submissions log, unblocking | @Landry-16 | `jureca/`, `docs/` | JURECA (lead account) |
-| Task 1: watermark localisation | @NathanBilliouw | `watermark/` | JURECA GPU |
-| Task 2: model equality (sole owner of `ep-*` queries) | @PhilibertG | `model_equality/` | laptop for `ref-*`; `ep-*` queries from the JURECA login node, answers in `$TEAM_DIR/model_equality/` |
+| Task 1: watermark localisation | @Landry-16 | `watermark/` | JURECA GPU |
+| Task 2: model equality (sole owner of `ep-*` queries) | @NathanBilliouw | `model_equality/` | laptop for `ref-*`; `ep-*` queries from the JURECA login node, answers in `$TEAM_DIR/model_equality/` |
 | Task 3: unlearning | @Mirado-77 | `unlearning/` | JURECA GPU |
+| Unassigned until 20:00 at the earliest | @PhilibertG | none yet | |
+
+Assignments are provisional: the lead reassigns tasks on the board (for example when Philibert joins). The board post wins over this table until it is updated.
