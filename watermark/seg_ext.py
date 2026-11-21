@@ -106,7 +106,8 @@ def main():
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--lr", type=float, default=1e-3, help="head; the extractor trunk gets lr / 10")
     ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--synth", type=int, default=0, help="synthetic samples added per epoch (from output/synth_<method>.npz)")
+    ap.add_argument("--synth", type=int, default=0, help="synthetic samples added per epoch (from output/<synth-set>_<method>.npz)")
+    ap.add_argument("--synth-set", default="synth", help="synth (v1) or synthv2")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
     torch.manual_seed(0)
@@ -120,7 +121,7 @@ def main():
     fold = folds_of(methods, full)
     tr = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold != int(a.fold))
     ev = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold == int(a.fold))
-    name = f"ext_{a.method}_fold{a.fold}" + (f"_synth{a.synth}" if a.synth else "")
+    name = f"ext_{a.method}_fold{a.fold}" + (f"_{a.synth_set}{a.synth}" if a.synth else "")
     print(f"{name}: train {len(tr)} real images, judged on {len(ev)}", flush=True)
 
     wm = load_watermark(a.method, device="cpu") if a.method != "stegastamp" else None
@@ -131,7 +132,7 @@ def main():
     steps = a.epochs * ((len(tr) + a.synth + a.batch - 1) // a.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=[a.lr / 10, a.lr], total_steps=steps, pct_start=0.1)
     if a.synth:
-        z = np.load(OUT / f"synth_{a.method}.npz")
+        z = np.load(OUT / f"{a.synth_set}_{a.method}.npz")
         s_img, s_mask = z["images"], z["masks128"]
         s_extra = np.where(z["kinds"] == "full", 0.97, 0.53).astype(np.float32)[:, None]   # full-image decode, as measured on real data
         print(f"+ {a.synth} synthetic samples per epoch out of {len(s_img)}", flush=True)
