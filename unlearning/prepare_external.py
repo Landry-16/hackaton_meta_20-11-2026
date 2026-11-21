@@ -36,6 +36,7 @@ def main():
     p.add_argument("--archive", default="external/imagenette2-320.tgz")
     p.add_argument("--out", default="external_images.npz")
     p.add_argument("--n", type=int, default=8000, help="number of images kept (random subset)")
+    p.add_argument("--expected-total", type=int, default=13394, help="images in the archive (Imagenette: 13394)")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
 
@@ -52,18 +53,25 @@ def main():
             tmp.rename(archive)
     print(f"reading {archive} ({archive.stat().st_size / 1e6:.0f} MB)", flush=True)
 
-    with tarfile.open(archive) as tar:
-        members = [m for m in tar.getmembers() if m.isfile() and m.name.lower().endswith((".jpeg", ".jpg", ".png"))]
-        rng = np.random.default_rng(a.seed)
-        members = [members[i] for i in rng.permutation(len(members))[: a.n]]
-        images = []
-        for i, m in enumerate(members):
+    # One sequential pass over the gzip stream (random access in a .tgz re-decompresses from the start: quadratic).
+    # Keep each image with probability keep_p, then shuffle and truncate to n.
+    rng = np.random.default_rng(a.seed)
+    keep_p = min(1.0, 1.15 * a.n / a.expected_total)
+    images, seen = [], 0
+    with tarfile.open(archive, mode="r|gz") as tar:
+        for m in tar:
+            if not (m.isfile() and m.name.lower().endswith((".jpeg", ".jpg", ".png"))):
+                continue
+            seen += 1
+            if rng.random() >= keep_p:
+                continue
             try:
                 images.append(to_224(tar.extractfile(m).read()))
             except Exception as exc:  # skip unreadable files
                 print(f"skip {m.name}: {exc}")
-            if (i + 1) % 1000 == 0:
-                print(f"  {i + 1}/{len(members)}", flush=True)
+            if len(images) % 1000 == 0:
+                print(f"  kept {len(images)} (read {seen})", flush=True)
+    images = [images[i] for i in rng.permutation(len(images))[: a.n]]
     arr = np.stack(images)
     np.savez(a.out, images=arr)
     print(f"wrote {a.out}: {arr.shape} {arr.dtype} ({Path(a.out).stat().st_size / 1e6:.0f} MB)")
