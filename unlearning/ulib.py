@@ -67,12 +67,22 @@ def soft_target(z: torch.Tensor, target_conf, tau: float = 1.0, other_tau: float
     return zt.softmax(1)
 
 
+def _fork_rng():
+    """Isolate a fixed-seed evaluation from the caller's RNG stream (CPU + current CUDA device)."""
+    return torch.random.fork_rng(devices=[torch.cuda.current_device()] if torch.cuda.is_available() else [])
+
+
 @torch.no_grad()
 def difficulty_caps(model, images_u8, conf_min, conf_max, views=4, bs=128, seed=1):
     """Per-image target cap from how robust the original is under STRONG augmentation: the original's mean top-class
     probability (T=2, pseudo-label = clean argmax) over a few strong views, rank-mapped linearly to [conf_min, conf_max].
     Hard images (low robustness) get a low cap, so the loss spreads out like a never-seen model's."""
     model.eval()
+    with _fork_rng():
+        return _difficulty_caps(model, images_u8, conf_min, conf_max, views, bs, seed)
+
+
+def _difficulty_caps(model, images_u8, conf_min, conf_max, views, bs, seed):
     torch.manual_seed(seed)
     score = []
     for i in range(0, len(images_u8), bs):
@@ -99,19 +109,25 @@ def logits_views(model, images_u8, views=("clean", "aug", "mix"), bs=128, seed=0
     """Logits per view, computed like the server (eval mode, fp16 autocast). Same seed => same augmented inputs."""
     model.eval()
     out = {}
-    for v in views:
-        torch.manual_seed(seed)
-        chunks = []
-        for i in range(0, len(images_u8), bs):
-            x = preprocess(images_u8[i:i + bs])
-            if v == "aug":
-                x = augment(x)
-            elif v == "mix":
-                x = proxy_retain(x)
-            with torch.autocast("cuda", dtype=torch.float16, enabled=DEVICE == "cuda"):
-                chunks.append(model(x).float().cpu())
-        out[v] = torch.cat(chunks)
+    with _fork_rng():
+        for v in views:
+            out[v] = _view_logits(model, images_u8, v, bs, seed)
     return out
+
+
+@torch.no_grad()
+def _view_logits(model, images_u8, v, bs, seed):
+    torch.manual_seed(seed)  # same seed => same augmented inputs for every model compared
+    chunks = []
+    for i in range(0, len(images_u8), bs):
+        x = preprocess(images_u8[i:i + bs])
+        if v == "aug":
+            x = augment(x)
+        elif v == "mix":
+            x = proxy_retain(x)
+        with torch.autocast("cuda", dtype=torch.float16, enabled=DEVICE == "cuda"):
+            chunks.append(model(x).float().cpu())
+    return torch.cat(chunks)
 
 
 def proxy_report(orig: dict, sub: dict) -> dict:
