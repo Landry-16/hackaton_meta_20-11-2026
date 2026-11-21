@@ -87,6 +87,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="pixelseal=synth400,trustmark=synth400,stegastamp=real_noflip")
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--test-prefix", default="seg_probs", help="seg_probs (single model) or seg_probs_ens (averaged)")
+    ap.add_argument("--out", default="submission_post.pt")
+    ap.add_argument("--raw-methods", default="", help="methods kept raw (thr 0.5, no rules) when tuning does not help in nested CV")
     ap.add_argument("--no-refine", action="store_true", help="ignore rect_refine boxes (e.g. not computed on test yet)")
     a = ap.parse_args()
     if a.no_refine:
@@ -119,6 +122,9 @@ def main():
         rows.append((method, len(names), base_scores.mean(), held_scores.mean(), d.mean(), d.std() / np.sqrt(len(d))))
         print(f"{method:10s} n={len(names)} raw {base_scores.mean():.4f} -> post-processed (nested CV) {held_scores.mean():.4f} "
               f"(paired gain {d.mean():+.4f} +- {d.std() / np.sqrt(len(d)):.4f}) | chosen {chosen[method]}", flush=True)
+    for m in filter(None, a.raw_methods.split(",")):
+        chosen[m] = dict(base_prm, refine=2.0, rect=False)
+        print(f"{m}: kept raw (nested CV showed no gain from tuning)")
     if rows:
         print(f"overall raw {np.mean([r[2] for r in rows]):.4f} -> post {np.mean([r[3] for r in rows]):.4f}")
         (OUT / "post_params.json").write_text(json.dumps(chosen))
@@ -128,13 +134,13 @@ def main():
         test = LocalisationDataset("release", "test")
         tprobs = {}
         for m in METHODS:
-            z = np.load(OUT / f"seg_probs_{m}_test.npz")
+            z = np.load(OUT / f"{a.test_prefix}_{m}_test.npz")
             tprobs.update(dict(zip(z["names"].tolist(), z["probs"].astype(np.float32))))
         names = [m["image_name"] for m in test.meta]
         masks = np.stack([post(tprobs[n], tinfo[n][0], tinfo[n][1], chosen[test.meta[i]["method"]], tinfo[n][2]) for i, n in enumerate(names)])
         assert masks.shape == (1020, 128, 128) and len(set(names)) == 1020
-        torch.save({"image_names": names, "masks": torch.from_numpy(masks).bool()}, OUT / "submission_post.pt")
-        print("wrote", OUT / "submission_post.pt", "| mean predicted watermarked share:", round(float(masks.mean()), 3))
+        torch.save({"image_names": names, "masks": torch.from_numpy(masks).bool()}, OUT / a.out)
+        print("wrote", OUT / a.out, "| mean predicted watermarked share:", round(float(masks.mean()), 3))
 
 
 if __name__ == "__main__":

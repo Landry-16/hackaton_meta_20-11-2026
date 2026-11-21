@@ -72,18 +72,24 @@ class ExtractorTrunk(nn.Module):
 
 
 class ExtSegmenter(nn.Module):
-    def __init__(self, method, wm, extra=1):
+    """scales: input sizes as multiples of the extractor resolution, e.g. (1,) or (1, 2): the same trunk sees the image
+    at its working resolution AND larger, so small regions and thin holes keep detail."""
+    def __init__(self, method, wm, extra=1, scales=(1,)):
         super().__init__()
-        self.res = RES[method]
+        self.sizes = [int(RES[method] * s) for s in scales]
         self.trunk = ExtractorTrunk(method, wm)
-        self.lat = nn.ModuleList(nn.Conv2d(c, 64, 1) for c in self.trunk.channels)
-        self.head = nn.Sequential(nn.Conv2d(64 * 4 + extra, 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(inplace=True),
+        self.lat = nn.ModuleList(nn.Conv2d(c, 64, 1) for _ in self.sizes for c in self.trunk.channels)
+        self.head = nn.Sequential(nn.Conv2d(64 * 4 * len(self.sizes) + extra, 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(inplace=True),
                                   nn.Conv2d(128, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
                                   nn.Conv2d(64, 1, 1))
 
     def forward(self, x, extra):                                   # x: B x 3 x 512 x 512 in [0, 1]; extra: B x 1
-        x = F.interpolate(x, size=(self.res, self.res), mode="bilinear", align_corners=False, antialias=True)
-        ups = [F.interpolate(l(f), size=(128, 128), mode="bilinear", align_corners=False) for l, f in zip(self.lat, self.trunk(x))]
+        ups, k = [], 0
+        for size in self.sizes:
+            xs = x if size == x.shape[-1] else F.interpolate(x, size=(size, size), mode="bilinear", align_corners=False, antialias=True)
+            for f in self.trunk(xs):
+                ups.append(F.interpolate(self.lat[k](f), size=(128, 128), mode="bilinear", align_corners=False))
+                k += 1
         planes = extra[:, :, None, None].expand(-1, -1, 128, 128)
         return self.head(torch.cat(ups + [planes], 1))[:, 0]
 
@@ -140,6 +146,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--synth", type=int, default=0, help="synthetic samples added per epoch (from output/<synth-set>_<method>.npz)")
     ap.add_argument("--synth-set", default="synth", help="synth (v1) or synthv2")
+    ap.add_argument("--scales", default="1", help="e.g. 1,2: the trunk also sees the image at twice its working resolution")
     ap.add_argument("--copypaste", type=int, default=0, help="real-watermark copy-paste samples per epoch (training fold donors only)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
@@ -158,7 +165,7 @@ def main():
     print(f"{name}: train {len(tr)} real images, judged on {len(ev)}", flush=True)
 
     wm = load_watermark(a.method, device="cpu") if a.method != "stegastamp" else None
-    model = ExtSegmenter(a.method, wm).to(a.device)
+    model = ExtSegmenter(a.method, wm, scales=tuple(float(v) for v in a.scales.split(","))).to(a.device)
     trunk = list(model.trunk.parameters())
     rest = [p for n, p in model.named_parameters() if not n.startswith("trunk.")]
     opt = torch.optim.AdamW([{"params": trunk, "lr": a.lr / 10}, {"params": rest, "lr": a.lr}], weight_decay=1e-4)
@@ -173,6 +180,8 @@ def main():
         cp = CopyPaste(a.method, images, masks, full, tr, np.random.default_rng(1))
         name += f"_cp{a.copypaste}"
         print(f"+ {a.copypaste} copy-paste samples per epoch, {len(cp.carriers)} clean carriers, {len(cp.donors)} type A donors", flush=True)
+    if a.scales != "1":
+        name += "_ms" + a.scales.replace(",", "-").replace(".", "p")
     history, t0, probs = [], time.time(), None
     for epoch in range(1, a.epochs + 1):
         model.train()
