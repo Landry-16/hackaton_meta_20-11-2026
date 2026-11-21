@@ -48,11 +48,14 @@ def proxy_retain(x: torch.Tensor) -> torch.Tensor:
     return torch.cat([mix[: b // 2], cut[b // 2:]])
 
 
-def soft_target(z: torch.Tensor, target_conf, tau: float = 1.0) -> torch.Tensor:
+def soft_target(z: torch.Tensor, target_conf, tau: float = 1.0, other_tau: float = 1.0) -> torch.Tensor:
     """Probabilities at temperature T*tau, with the top class capped at `target_conf` (lower the top logit only).
     The rest of the mass keeps the original's relative ranking, so where the original's runner-up dominates,
     the target flips to it, which is the 'wrong class' a model that never saw the image is most likely to pick."""
     zt = z.float() / (T * tau)
+    if other_tau != 1.0:  # flatten the mass among the NON-top classes only (gold = average of several models)
+        top = zt.argmax(1, keepdim=True)
+        zt = (zt / other_tau).scatter(1, top, zt.gather(1, top))
     c = torch.as_tensor(target_conf, dtype=zt.dtype, device=zt.device).reshape(-1, 1)  # scalar or one cap per image
     if (c < 1).any():
         c = c.clamp(1e-4, 1 - 1e-6)

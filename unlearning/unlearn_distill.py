@@ -24,6 +24,8 @@ def parse():
     p.add_argument("--target-conf", type=float, default=0.5, help="cap on the target top-class prob (at T=2)")
     p.add_argument("--conf-min", type=float, default=None, help="per-image caps: hardest image gets conf-min ...")
     p.add_argument("--conf-max", type=float, default=None, help="... easiest gets conf-max (overrides --target-conf)")
+    p.add_argument("--other-tau", type=float, default=1.0,
+                   help=">1 spreads the target mass over the wrong classes (top-class cap unchanged)")
     p.add_argument("--tau", type=float, default=1.0, help="extra temperature on the target (>1 = softer)")
     p.add_argument("--alpha", type=float, default=1.0, help="weight of the proxy-retain KL to the original")
     p.add_argument("--l2sp", type=float, default=0.0, help="weight of ||w - w_orig||^2 on trained params")
@@ -59,7 +61,7 @@ def main():
     a = parse()
     torch.manual_seed(a.seed)
     caps_tag = f"cr{a.conf_min}-{a.conf_max}" if a.conf_min is not None else f"tc{a.target_conf}"
-    tag = f"{caps_tag}_tau{a.tau}_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_cf{a.clean_frac}" + ("_ext" if a.external else "") + (f"_init-{Path(a.init).stem}" if a.init else "")
+    tag = f"{caps_tag}_tau{a.tau}" + (f"_ot{a.other_tau}" if a.other_tau != 1.0 else "") + f"_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_cf{a.clean_frac}" + ("_ext" if a.external else "") + (f"_init-{Path(a.init).stem}" if a.init else "")
     out = Path(a.out + "_" + tag)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -106,7 +108,7 @@ def main():
                 zf, zr = teacher(xf).float(), teacher(xr).float()
             with torch.autocast(**amp):
                 sf, sr = student(xf).float(), student(xr).float()
-            target = soft_target(zf, caps[idx].to(zf.device) if caps is not None else a.target_conf, a.tau)
+            target = soft_target(zf, caps[idx].to(zf.device) if caps is not None else a.target_conf, a.tau, a.other_tau)
             lf = F.kl_div(F.log_softmax(sf / T, 1), target, reduction="batchmean")
             lr_ = F.kl_div(F.log_softmax(sr / T, 1), F.softmax(zr / T, 1), reduction="batchmean")
             loss = lf + a.alpha * lr_
