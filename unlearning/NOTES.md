@@ -164,3 +164,5 @@ Result format: command | clean loss (std), acc | aug loss, acc | ext agree, ext 
 - B raw (--alpha 3) dropped from the queue: weaker forgetting (loss 3.86) mixed with better retain (KL 0.067).
 - Server cooldown is now 10 min (6 submissions/hour); submitter runs with --cooldown 610.
 - Pending: A + head 1.25 (clean 5.32, aug 4.64, ext agree 0.83, KL 0.137).
+
+- 22 Nov 01:00: Mirado and Philibert both gave a standing go: Philibert's Claude writes and directs the rounds; Mirado can overrule. Philibert may run steps directly (GPU queue, files in out/, append to logs/queue_v2.txt).
