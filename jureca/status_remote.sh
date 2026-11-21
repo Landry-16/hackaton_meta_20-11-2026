@@ -34,8 +34,9 @@ done
 echo
 
 # ---- GPUs of the hold node
-hold=$(squeue -u savarimuthu1 -h -n hold -t R -o %i | head -1)
-echo "${B}Landry's hold node${N}"
+hold=$(squeue -u "$USER" -h -n hold -t R -o %i | head -1)
+[ -z "$hold" ] && hold=$(squeue -u "$USER" -h -t R -o %i | head -1)
+echo "${B}Your node${N} ${D}($USER)${N}"
 if [ -n "$hold" ]; then
   node=$(squeue -j "$hold" -h -o %N)
   echo "  job $hold on $node"
@@ -48,7 +49,7 @@ if [ -n "$hold" ]; then
   steps=$(squeue -s -j "$hold" -h -o "%i %j %M" | grep -v '\.batch\|\.extern\|^ *$')
   [ -n "$steps" ] && { echo "  ${D}running steps:${N}"; echo "$steps" | sed 's/^/    /'; }
 else
-  echo "  ${Y}not running yet${N} (GPU runs queue as normal jobs until it starts)"
+  echo "  ${D}no running job for $USER${N}"
 fi
 echo
 
