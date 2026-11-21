@@ -22,7 +22,8 @@ from wmloc.data import LocalisationDataset
 from wmloc.utils import miou_image
 
 OUT = Path("output")
-GRID = {"thr": [0.3, 0.4, 0.5, 0.6], "lcc": [False, True], "snap": [0.8, 0.9, 1.01], "floor": [0.0, 0.03, 0.08]}
+GRID = {"thr": [0.3, 0.4, 0.5, 0.6], "lcc": [False, True], "snap": [0.8, 0.9, 1.01], "floor": [0.0, 0.03, 0.08],
+        "refine": [0.8, 0.9, 2.0]}           # 2.0 = never use the refined rectangle
 
 
 def oof_probs(method, source):
@@ -35,9 +36,11 @@ def oof_probs(method, source):
     return probs
 
 
-def post(p, typeb, rect_box, prm):
+def post(p, typeb, rect_box, prm, refined=None):
     if rect_box is not None:
         return box_mask(rect_box)
+    if refined is not None and refined[0] >= prm.get("refine", 2.0):
+        return box_mask(refined[1])
     m = (p >= prm["thr"]).astype(np.uint8)
     if typeb and prm["lcc"] and m.any():
         lab, n = ndimage.label(m)
@@ -64,12 +67,18 @@ def context(split):
     info = {}
     for n, m, fa, ba, box in zip(cache["names"].tolist(), cache["methods"], cache["full_acc"], cache["best_acc"], cache["boxes"]):
         c = int(choose(np.array([fa]), np.array([ba]), *params[m])[0])
-        info[n] = (fa < params[m][0], tuple(box) if c == 1 else None)       # (type B?, decoded rectangle or None)
+        info[n] = (fa < params[m][0], tuple(box) if c == 1 else None, None)  # (type B?, decoded rectangle, refined)
+    f = OUT / f"refine_{split}.npz"
+    if f.exists():                                                        # rect_refine.py: (best accuracy, box)
+        z = np.load(f)
+        for n, acc, box in zip(z["names"].tolist(), z["best_acc"], z["boxes"]):
+            if n in info:
+                info[n] = (info[n][0], info[n][1], (float(acc), tuple(int(v) for v in box)))
     return info
 
 
 def score_set(names, probs, gts, info, prm, use_rect=True):
-    return np.array([miou_image(post(probs[n], info[n][0], info[n][1] if use_rect else None, prm), gts[n]) for n in names])
+    return np.array([miou_image(post(probs[n], info[n][0], info[n][1] if use_rect else None, prm, info[n][2] if use_rect else None), gts[n]) for n in names])
 
 
 def main():
@@ -117,7 +126,7 @@ def main():
             z = np.load(OUT / f"seg_probs_{m}_test.npz")
             tprobs.update(dict(zip(z["names"].tolist(), z["probs"].astype(np.float32))))
         names = [m["image_name"] for m in test.meta]
-        masks = np.stack([post(tprobs[n], tinfo[n][0], tinfo[n][1], chosen[test.meta[i]["method"]]) for i, n in enumerate(names)])
+        masks = np.stack([post(tprobs[n], tinfo[n][0], tinfo[n][1], chosen[test.meta[i]["method"]], tinfo[n][2]) for i, n in enumerate(names)])
         assert masks.shape == (1020, 128, 128) and len(set(names)) == 1020
         torch.save({"image_names": names, "masks": torch.from_numpy(masks).bool()}, OUT / "submission_post.pt")
         print("wrote", OUT / "submission_post.pt")
