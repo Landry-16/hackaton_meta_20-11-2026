@@ -19,7 +19,22 @@ from seg_real import batch_x, load_split, plots, report
 from seg_train import loss_fn
 
 OUT = Path("output")
-RES = {"pixelseal": 256, "trustmark": 245}
+RES = {"pixelseal": 256, "trustmark": 245, "stegastamp": 400}
+
+
+def stegastamp_trunk():
+    """The StegaStamp decoder converted from ONNX to PyTorch, cut to return its conv_1..conv_7 feature maps."""
+    import onnx
+    from onnx2torch import convert
+    from wmloc.watermarks import load_watermark  # noqa: F401  (models dir resolution below)
+    import os
+    path = Path(os.environ.get("WMLOC_MODELS", Path(__file__).resolve().parent / "models")) / "stegastamp" / "stega_stamp_logits.onnx"
+    gm = convert(onnx.load(str(path)))
+    nodes = {n.name: n for n in gm.graph.nodes}
+    [n for n in gm.graph.nodes if n.op == "output"][0].args = (tuple(nodes[f"gen_decoder_dec_conv_{k}_relu"] for k in range(1, 8)),)
+    gm.graph.eliminate_dead_code()
+    gm.recompile()
+    return gm
 
 
 class ExtractorTrunk(nn.Module):
@@ -29,13 +44,17 @@ class ExtractorTrunk(nn.Module):
         self.method = method
         if method == "pixelseal":
             self.cn = wm.det.convnext
-            self.channels = [m[-1].out_channels if hasattr(m[-1], "out_channels") else None for m in self.cn.downsample_layers]
-        else:
+        elif method == "trustmark":
             self.rn = wm.net
+        else:
+            self.ss = stegastamp_trunk()
         with torch.no_grad():
             self.channels = [f.shape[1] for f in self.forward(torch.zeros(1, 3, RES[method], RES[method]))]
 
     def forward(self, x):
+        if self.method == "stegastamp":                           # WAVES ONNX graph: NHWC in [0, 1], secret unused
+            fs = self.ss(torch.zeros(len(x), 100, device=x.device), x.clamp(0, 1).permute(0, 2, 3, 1).contiguous())
+            return [fs[k] for k in (1, 3, 4, 6)]
         x = x * 2 - 1
         feats = []
         if self.method == "pixelseal":
@@ -103,7 +122,7 @@ def main():
     name = f"ext_{a.method}_fold{a.fold}" + (f"_synth{a.synth}" if a.synth else "")
     print(f"{name}: train {len(tr)} real images, judged on {len(ev)}", flush=True)
 
-    wm = load_watermark(a.method, device="cpu")
+    wm = load_watermark(a.method, device="cpu") if a.method != "stegastamp" else None
     model = ExtSegmenter(a.method, wm).to(a.device)
     trunk = list(model.trunk.parameters())
     rest = [p for n, p in model.named_parameters() if not n.startswith("trunk.")]
