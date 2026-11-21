@@ -129,6 +129,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--synth", type=int, default=0, help="synthetic samples per method per epoch")
     ap.add_argument("--synth-set", default="synthv2")
+    ap.add_argument("--no-real", action="store_true", help="train on synthetic samples only (transfer gate), judge on ALL real images")
     ap.add_argument("--no-flip", action="store_true", help="no flip augmentation or TTA (StegaStamp decoding dies under flips)")
     ap.add_argument("--save-methods", default=",".join(METHODS), help="with --fold all: methods whose test probabilities to write")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -140,7 +141,9 @@ def main():
     fold = folds_of(methods, full)
     tr = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold != int(a.fold))
     ev = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold == int(a.fold))
-    name = f"fold{a.fold}"
+    if a.no_real:
+        tr, ev = np.array([], int), np.arange(len(images))
+    name = f"fold{a.fold}" + ("_synthonly" if a.no_real else "")
     print(f"{name}: train {len(tr)} real images, judged on {len(ev)}", flush=True)
 
     model = RealSegmenter(pretrained=not a.limit).to(a.device)
@@ -150,7 +153,7 @@ def main():
         for k, m in enumerate(METHODS):
             z = np.load(OUT / f"{a.synth_set}_{m}.npz")
             onehot = np.zeros(len(METHODS) + 1, np.float32); onehot[k] = 1
-            ex = np.stack([onehot] * len(z["kinds"])); ex[:, -1] = np.where(z["kinds"] == "full", 0.97, 0.53)
+            ex = np.stack([onehot] * len(z["kinds"])); ex[:, -1] = z["acc"] if "acc" in z.files else np.where(z["kinds"] == "full", 0.97, 0.53)
             synth[m] = (z["images"], z["masks128"], ex)
         name += f"_{a.synth_set}{a.synth}"
     steps = a.epochs * ((len(tr) + a.synth * len(synth) + a.batch - 1) // a.batch)

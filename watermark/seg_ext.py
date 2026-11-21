@@ -146,6 +146,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--synth", type=int, default=0, help="synthetic samples added per epoch (from output/<synth-set>_<method>.npz)")
     ap.add_argument("--synth-set", default="synth", help="synth (v1) or synthv2")
+    ap.add_argument("--no-real", action="store_true", help="train on synthetic samples only (transfer gate), judge on ALL real images")
     ap.add_argument("--scales", default="1", help="e.g. 1,2: the trunk also sees the image at twice its working resolution")
     ap.add_argument("--copypaste", type=int, default=0, help="real-watermark copy-paste samples per epoch (training fold donors only)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -161,7 +162,9 @@ def main():
     fold = folds_of(methods, full)
     tr = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold != int(a.fold))
     ev = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold == int(a.fold))
-    name = f"ext_{a.method}_fold{a.fold}" + (f"_{a.synth_set}{a.synth}" if a.synth else "")
+    if a.no_real:                                   # transfer gate: no real image in training, every real image judged
+        tr, ev = np.array([], int), np.arange(len(images))
+    name = f"ext_{a.method}_fold{a.fold}" + (f"_{a.synth_set}{a.synth}" if a.synth else "") + ("_synthonly" if a.no_real else "")
     print(f"{name}: train {len(tr)} real images, judged on {len(ev)}", flush=True)
 
     wm = load_watermark(a.method, device="cpu") if a.method != "stegastamp" else None
@@ -174,7 +177,7 @@ def main():
     if a.synth:
         z = np.load(OUT / f"{a.synth_set}_{a.method}.npz")
         s_img, s_mask = z["images"], z["masks128"]
-        s_extra = np.where(z["kinds"] == "full", 0.97, 0.53).astype(np.float32)[:, None]   # full-image decode, as measured on real data
+        s_extra = (z["acc"] if "acc" in z.files else np.where(z["kinds"] == "full", 0.97, 0.53)).astype(np.float32)[:, None]   # full-image decode
         print(f"+ {a.synth} synthetic samples per epoch out of {len(s_img)}", flush=True)
     if a.copypaste:
         cp = CopyPaste(a.method, images, masks, full, tr, np.random.default_rng(1))
