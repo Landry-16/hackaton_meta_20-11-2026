@@ -107,6 +107,53 @@ def embed_degraded(wm, img, bits, rng):
     return out
 
 
+def residual(wm, region, bits, rng, margins=None):
+    """Watermark residual of `region` (embed - original), embedded on a canvas larger by independent per-side margins
+    (reflect padding), degraded on the residual only (strength, light blur): the image content itself is never touched."""
+    t, b, l, r = margins if margins is not None else rng.integers(0, 33, 4)
+    canvas = np.pad(region, ((t, b), (l, r), (0, 0)), mode="reflect")
+    res = (np.array(wm.embed(canvas, bits)).astype(np.float32) - canvas.astype(np.float32))[t:t + region.shape[0], l:l + region.shape[1]]
+    res *= rng.uniform(0.6, 1.0)
+    sigma = rng.uniform(0, 0.8)
+    if sigma > 0.05:
+        res = ndimage.gaussian_filter(res, sigma=(sigma, sigma, 0))
+    return res
+
+
+def make_sample_v3(wm, method, img, rng):
+    """v3: content untouched, only the watermark residual is added; rectangles embedded at native size with 3-4 px of
+    real context around them (the embedding frame is slightly larger than the mask); random blob holes (no train mask
+    shapes, so no leak from held-out folds)."""
+    bits = rng.integers(0, 2, NBITS[method])
+    kind = rng.choice(["full", "rect", "object"], p=[0.5, 0.3, 0.2])
+    base = img.astype(np.float32)
+    if kind == "full":
+        res, mask = residual(wm, img, bits, rng), np.ones((SIZE, SIZE), np.uint8)
+        for _ in range(rng.integers(1, 4)):
+            hole = blob(rng, rng.uniform(0.02, 0.15))
+            res[hole == 1], mask[hole == 1] = 0, 0
+        out = base + res
+    elif kind == "rect":
+        area = np.exp(rng.uniform(np.log(0.01), np.log(0.35))) * SIZE * SIZE
+        aspect = np.exp(rng.uniform(0, np.log(MAX_ASPECT[method])))
+        h = int(np.clip(np.sqrt(area * aspect), 16, SIZE - 8))
+        w = int(np.clip(area / h, 16, SIZE - 8))
+        if rng.random() < 0.5:
+            h, w = w, h
+        y0, x0 = rng.integers(0, SIZE - h + 1), rng.integers(0, SIZE - w + 1)
+        d = int(rng.integers(3, 5))
+        Y0, Y1, X0, X1 = max(0, y0 - d), min(SIZE, y0 + h + d), max(0, x0 - d), min(SIZE, x0 + w + d)
+        res = residual(wm, np.ascontiguousarray(img[Y0:Y1, X0:X1]), bits, rng, margins=(0, 0, 0, 0))
+        out, mask = base.copy(), np.zeros((SIZE, SIZE), np.uint8)
+        out[y0:y0 + h, x0:x0 + w] += res[y0 - Y0:y0 - Y0 + h, x0 - X0:x0 - X0 + w]
+        mask[y0:y0 + h, x0:x0 + w] = 1
+    else:
+        res = residual(wm, img, bits, rng)
+        mask = blob(rng, rng.uniform(0.02, 0.25))
+        out = base + res * mask[:, :, None]
+    return np.clip(np.round(out), 0, 255).astype(np.uint8), mask, kind, bits
+
+
 def make_sample_v2(wm, method, img, rng):
     """Same image only (no foreign content), real hole shapes, realistic degradation, aspect up to the task limit."""
     bits = rng.integers(0, 2, NBITS[method])
@@ -159,16 +206,21 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--calibrate", action="store_true")
     ap.add_argument("--v2", action="store_true", help="recipe v2: same image only, real hole shapes, degradation")
+    ap.add_argument("--suffix", default="", help="appended to the set name, e.g. b -> synthv3b_<method>.npz")
+    ap.add_argument("--v3", action="store_true", help="recipe v3: residual only, content untouched, native-size rectangles, measured decode")
     a = ap.parse_args()
     from wmloc.watermarks import load_watermark
     print(f"device {a.device}, cuda available {torch.cuda.is_available()}", flush=True)
     wm = load_watermark(a.method, device=a.device)
     pool, rng = carriers(a.method), np.random.default_rng(a.seed)
-    images, masks, kinds, kept = [], [], [], []
+    images, masks, kinds, kept, accs = [], [], [], [], []
     t0 = time.time()
     for i in range(a.n):
         (ds1, i1), (ds2, i2) = (pool[j] for j in rng.choice(len(pool), 2, replace=False))
-        if a.v2:
+        if a.v3:
+            img, mask, kind, bits = make_sample_v3(wm, a.method, ds1[i1]["image"], rng)
+            accs.append(float((wm.decode(to_tensor(img).to(a.device)).cpu().numpy()[0] == bits).mean()))
+        elif a.v2:
             img, mask, kind, bits = make_sample_v2(wm, a.method, ds1[i1]["image"], rng)
         else:
             img, mask, kind, bits = make_sample(wm, a.method, ds1[i1]["image"], ds2[i2]["image"], rng)
@@ -180,8 +232,13 @@ def main():
         if (i + 1) % 100 == 0 or i + 1 == a.n:
             print(f"{a.method} {i + 1}/{a.n} samples, {time.time() - t0:.0f} s", flush=True)
     OUT.mkdir(exist_ok=True)
-    np.savez(OUT / f"synth{'v2' if a.v2 else ''}_{a.method}{'_quick' if a.calibrate else ''}.npz",
-             images=np.stack(images), masks128=np.stack(masks), kinds=np.array(kinds))
+    tag = "v3" if a.v3 else "v2" if a.v2 else ""
+    extra = {"acc": np.array(accs, np.float32)} if accs else {}
+    np.savez(OUT / f"synth{tag}{a.suffix}_{a.method}{'_quick' if a.calibrate else ''}.npz",
+             images=np.stack(images), masks128=np.stack(masks), kinds=np.array(kinds), **extra)
+    if accs:
+        k = np.array(kinds)
+        print("measured full-image decode:", {t: round(float(np.mean(np.array(accs)[k == t])), 3) for t in ("full", "rect", "object")})
     if a.calibrate:
         calibrate(wm, a.method, kept)
 
