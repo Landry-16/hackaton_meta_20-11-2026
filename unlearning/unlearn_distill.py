@@ -61,7 +61,7 @@ def main():
     a = parse()
     torch.manual_seed(a.seed)
     caps_tag = f"cr{a.conf_min}-{a.conf_max}" if a.conf_min is not None else f"tc{a.target_conf}"
-    tag = f"{caps_tag}_tau{a.tau}" + (f"_ot{a.other_tau}" if a.other_tau != 1.0 else "") + f"_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_cf{a.clean_frac}" + ("_ext" if a.external else "") + (f"_init-{Path(a.init).stem}" if a.init else "") + (f"_s{a.seed}" if a.seed else "")
+    tag = f"{caps_tag}_tau{a.tau}" + (f"_ot{a.other_tau}" if a.other_tau != 1.0 else "") + f"_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_ep{a.epochs}_cf{a.clean_frac}" + ("_ext" if a.external else "") + (f"_init-{Path(a.init).stem}" if a.init else "") + (f"_s{a.seed}" if a.seed else "")
     out = Path(a.out + "_" + tag)
     out.parent.mkdir(parents=True, exist_ok=True)
 

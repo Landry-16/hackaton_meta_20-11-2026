@@ -95,8 +95,17 @@ def main():
         if lock.read_text().strip() != token:
             print(f"{datetime.now():%H:%M:%S} another submitter took the lock, exiting", flush=True)
             return
+        if not path.is_file():  # removed while we were waiting for the cooldown: skip it, never crash
+            print(f"{datetime.now():%H:%M:%S} {path.name} disappeared before its slot, skipped", flush=True)
+            with log.open("a", newline="") as f:
+                csv.writer(f).writerow([datetime.now().isoformat(timespec="seconds"), str(path), "rejected_missing",
+                                        "", "", "file removed before submission"])
+            continue
         print(f"{datetime.now():%H:%M:%S} submitting {path.name} ({len(todo) - 1} more queued)", flush=True)
-        status, score, prev, msg, wait = submit(path, key)
+        try:
+            status, score, prev, msg, wait = submit(path, key)
+        except OSError as exc:  # unreadable file etc.: log it, keep the submitter alive
+            status, score, prev, msg, wait = "rejected_oserror", "", "", str(exc)[:200], 0
         print(f"  -> {status} score={score} prev_best={prev} {msg}", flush=True)
         if status in ("cooldown", "network_error"):
             next_slot = time.time() + wait
