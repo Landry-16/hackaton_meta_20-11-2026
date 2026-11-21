@@ -133,3 +133,13 @@ Fixed bugs: --seed had no effect and evaluation reset the training RNG (fixed 73
 in checkpoint names; the submitter skips files removed during its cooldown (e4bc00b).
 Open tests: --clean-frac 0.2 (augmented copies forgotten less than clean ones), --alpha 3 (retain weight),
 seed 1 of the best recipe (Philibert, running), lr 2e-4 x 50 ep (Mirado, running).
+
+## Process from 21 Nov 23:55 (agreed by Mirado): rounds
+Philibert's Claude writes each round's plan (max 2 experiments, one per GPU slot, one change vs the reference recipe)
+and its conclusions; Mirado's Claude runs, keeps this file and the results table, and is the only submitter.
+Nothing is launched outside a plan; new ideas go to the next round. Mirado can overrule; if no answer within 20 min,
+Mirado's Claude continues from the last validated plan.
+Reference recipe: caps 0.002-0.02 + --external external_images.npz, lr 2e-4 x 35 ep (public 0.2706; seed 1 locally
+identical: clean loss 5.21, aug 3.96, ext agree 0.824). lr 2e-4 x 50 ep overshoots (0.2599).
+Round 1: --clean-frac 0.2 (Mirado) and --alpha 3 (Philibert), both at 35 ep.
+Result format: command | clean loss (std), acc | aug loss, acc | ext agree, ext KL | public score if submitted.
