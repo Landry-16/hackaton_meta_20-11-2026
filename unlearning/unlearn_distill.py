@@ -16,12 +16,14 @@ import torch
 import torch.nn.functional as F
 
 from task_template import DEVICE, MODEL_FILE, load_forget_images, load_model, preprocess
-from ulib import T, augment, fmt, logits_views, proxy_report, proxy_retain, soft_target
+from ulib import T, augment, difficulty_caps, fmt, logits_views, proxy_report, proxy_retain, soft_target
 
 
 def parse():
     p = argparse.ArgumentParser()
     p.add_argument("--target-conf", type=float, default=0.5, help="cap on the target top-class prob (at T=2)")
+    p.add_argument("--conf-min", type=float, default=None, help="per-image caps: hardest image gets conf-min ...")
+    p.add_argument("--conf-max", type=float, default=None, help="... easiest gets conf-max (overrides --target-conf)")
     p.add_argument("--tau", type=float, default=1.0, help="extra temperature on the target (>1 = softer)")
     p.add_argument("--alpha", type=float, default=1.0, help="weight of the proxy-retain KL to the original")
     p.add_argument("--l2sp", type=float, default=0.0, help="weight of ||w - w_orig||^2 on trained params")
@@ -51,7 +53,8 @@ def trainable(model, k):
 def main():
     a = parse()
     torch.manual_seed(a.seed)
-    tag = f"tc{a.target_conf}_tau{a.tau}_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_cf{a.clean_frac}"
+    caps_tag = f"cr{a.conf_min}-{a.conf_max}" if a.conf_min is not None else f"tc{a.target_conf}"
+    tag = f"{caps_tag}_tau{a.tau}_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_cf{a.clean_frac}"
     out = Path(a.out + "_" + tag)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -66,6 +69,10 @@ def main():
     anchor = [p.detach().clone() for p in params]
     print(f"{tag}: {len(imgs)} images, {sum(p.numel() for p in params) / 1e6:.1f}M trainable params, device {DEVICE}")
 
+    caps = None
+    if a.conf_min is not None:
+        caps = difficulty_caps(teacher, imgs, a.conf_min, a.conf_max)
+        print(f"per-image caps: min {caps.min():.3f} median {caps.median():.3f} max {caps.max():.3f}")
     ev = imgs[: a.eval_n]
     orig_views = logits_views(teacher, ev)
     opt = torch.optim.AdamW(params, lr=a.lr, weight_decay=0.0)
@@ -85,7 +92,7 @@ def main():
                 zf, zr = teacher(xf).float(), teacher(xr).float()
             with torch.autocast(**amp):
                 sf, sr = student(xf).float(), student(xr).float()
-            target = soft_target(zf, a.target_conf, a.tau)
+            target = soft_target(zf, caps[idx].to(zf.device) if caps is not None else a.target_conf, a.tau)
             lf = F.kl_div(F.log_softmax(sf / T, 1), target, reduction="batchmean")
             lr_ = F.kl_div(F.log_softmax(sr / T, 1), F.softmax(zr / T, 1), reduction="batchmean")
             loss = lf + a.alpha * lr_

@@ -48,18 +48,40 @@ def proxy_retain(x: torch.Tensor) -> torch.Tensor:
     return torch.cat([mix[: b // 2], cut[b // 2:]])
 
 
-def soft_target(z: torch.Tensor, target_conf: float, tau: float = 1.0) -> torch.Tensor:
+def soft_target(z: torch.Tensor, target_conf, tau: float = 1.0) -> torch.Tensor:
     """Probabilities at temperature T*tau, with the top class capped at `target_conf` (lower the top logit only).
     The rest of the mass keeps the original's relative ranking, so where the original's runner-up dominates,
     the target flips to it, which is the 'wrong class' a model that never saw the image is most likely to pick."""
     zt = z.float() / (T * tau)
-    if target_conf < 1.0:
+    c = torch.as_tensor(target_conf, dtype=zt.dtype, device=zt.device).reshape(-1, 1)  # scalar or one cap per image
+    if (c < 1).any():
+        c = c.clamp(1e-4, 1 - 1e-6)
         top = zt.argmax(1, keepdim=True)
         others = zt.scatter(1, top, float("-inf"))
         lse_others = torch.logsumexp(others, 1, keepdim=True)
-        capped = lse_others + math.log(target_conf / (1 - target_conf))  # top logit giving p_top = target_conf
+        capped = lse_others + torch.log(c / (1 - c))  # top logit giving p_top = c
         zt = zt.scatter(1, top, torch.minimum(zt.gather(1, top), capped))
     return zt.softmax(1)
+
+
+@torch.no_grad()
+def difficulty_caps(model, images_u8, conf_min, conf_max, views=4, bs=128, seed=1):
+    """Per-image target cap from how robust the original is under STRONG augmentation: the original's mean top-class
+    probability (T=2, pseudo-label = clean argmax) over a few strong views, rank-mapped linearly to [conf_min, conf_max].
+    Hard images (low robustness) get a low cap, so the loss spreads out like a never-seen model's."""
+    model.eval()
+    torch.manual_seed(seed)
+    score = []
+    for i in range(0, len(images_u8), bs):
+        x = preprocess(images_u8[i:i + bs])
+        with torch.autocast("cuda", dtype=torch.float16, enabled=DEVICE == "cuda"):
+            y = model(x).argmax(1, keepdim=True)
+            p = sum((model(augment(x, scale=(0.4, 0.9), max_rot_deg=25, jitter=0.2)).float() / T).softmax(1).gather(1, y)
+                    for _ in range(views)) / views
+        score.append(p.squeeze(1).float().cpu())
+    score = torch.cat(score)
+    rank = score.argsort().argsort().float() / max(len(score) - 1, 1)
+    return conf_min + (conf_max - conf_min) * rank
 
 
 def kl_t(p_logits: torch.Tensor, q_logits: torch.Tensor) -> torch.Tensor:
