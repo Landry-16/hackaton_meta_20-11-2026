@@ -7,7 +7,8 @@
 # Each config gets its own log: logs/hold-<config words joined>.out. Common args: COMMON env (default below).
 set -uo pipefail
 [ $# -ge 1 ] && [ $# -le 4 ] || { echo "give 1 to 4 configs (one quoted string each)" >&2; exit 1; }
-common="${COMMON:---lr 1e-4 --epochs 25 --save-every 5}"
+script="${SCRIPT:-unlearning/unlearn_distill.py}"   # e.g. SCRIPT=unlearning/lfssd.py COMMON= ...
+common="${COMMON---lr 1e-4 --epochs 15 --save-every 5}"
 mkdir -p logs
 
 until hold=$(squeue -u "$USER" -h -n hold -t RUNNING -o %i | head -1) && [ -n "$hold" ]; do
@@ -16,12 +17,12 @@ until hold=$(squeue -u "$USER" -h -n hold -t RUNNING -o %i | head -1) && [ -n "$
 done
 echo "$(date +%H:%M:%S) hold job $hold running"
 
-gpu=0
+gpu=${GPU0:-0}   # first GPU to use; give a second concurrent sweep e.g. GPU0=2
 for cfg in "$@"; do
   name="hold$(echo " $cfg" | sed -e 's/ --/_/g' -e 's/ /-/g')"
   # shellcheck disable=SC2086
   srun --jobid="$hold" --overlap --ntasks=1 env LAUNCH= REPO_DIR="$PWD" CUDA_VISIBLE_DEVICES=$gpu \
-    bash jureca/job.sh unlearning unlearning/unlearn_distill.py $cfg $common > "logs/$name.out" 2>&1 &
+    bash jureca/job.sh unlearning "$script" $cfg $common > "logs/$name.out" 2>&1 &
   echo "GPU $gpu: $cfg -> logs/$name.out"
   gpu=$((gpu + 1))
 done

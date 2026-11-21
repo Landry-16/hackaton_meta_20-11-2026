@@ -39,6 +39,8 @@ def parse():
     p.add_argument("--external", default=None, help="npz of unlabeled external images (prepare_external.py) used as "
                    "retain anchor instead of mixup/cutmix of forget images")
     p.add_argument("--holdout", type=int, default=1000, help="last N external images: not trained on, used for drift")
+    p.add_argument("--init", default=None, help="start the student from this checkpoint (e.g. an LFSSD output); "
+                   "the teacher stays the original model")
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args()
 
@@ -57,7 +59,7 @@ def main():
     a = parse()
     torch.manual_seed(a.seed)
     caps_tag = f"cr{a.conf_min}-{a.conf_max}" if a.conf_min is not None else f"tc{a.target_conf}"
-    tag = f"{caps_tag}_tau{a.tau}_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_cf{a.clean_frac}" + ("_ext" if a.external else "")
+    tag = f"{caps_tag}_tau{a.tau}_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_cf{a.clean_frac}" + ("_ext" if a.external else "") + (f"_init-{Path(a.init).stem}" if a.init else "")
     out = Path(a.out + "_" + tag)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -67,7 +69,7 @@ def main():
     teacher = load_model(MODEL_FILE).eval()
     for p in teacher.parameters():
         p.requires_grad = False
-    student = load_model(MODEL_FILE)
+    student = load_model(Path(a.init) if a.init else MODEL_FILE)
     params = trainable(student, a.train_blocks)
     anchor = [p.detach().clone() for p in params]
     print(f"{tag}: {len(imgs)} images, {sum(p.numel() for p in params) / 1e6:.1f}M trainable params, device {DEVICE}")
