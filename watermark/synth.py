@@ -206,6 +206,7 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--calibrate", action="store_true")
     ap.add_argument("--v2", action="store_true", help="recipe v2: same image only, real hole shapes, degradation")
+    ap.add_argument("--suffix", default="", help="appended to the set name, e.g. b -> synthv3b_<method>.npz")
     ap.add_argument("--v3", action="store_true", help="recipe v3: residual only, content untouched, native-size rectangles, measured decode")
     a = ap.parse_args()
     from wmloc.watermarks import load_watermark
@@ -233,7 +234,7 @@ def main():
     OUT.mkdir(exist_ok=True)
     tag = "v3" if a.v3 else "v2" if a.v2 else ""
     extra = {"acc": np.array(accs, np.float32)} if accs else {}
-    np.savez(OUT / f"synth{tag}_{a.method}{'_quick' if a.calibrate else ''}.npz",
+    np.savez(OUT / f"synth{tag}{a.suffix}_{a.method}{'_quick' if a.calibrate else ''}.npz",
              images=np.stack(images), masks128=np.stack(masks), kinds=np.array(kinds), **extra)
     if accs:
         k = np.array(kinds)
