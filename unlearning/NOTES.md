@@ -143,3 +143,13 @@ Reference recipe: caps 0.002-0.02 + --external external_images.npz, lr 2e-4 x 35
 identical: clean loss 5.21, aug 3.96, ext agree 0.824). lr 2e-4 x 50 ep overshoots (0.2599).
 Round 1: --clean-frac 0.2 (Mirado) and --alpha 3 (Philibert), both at 35 ep.
 Result format: command | clean loss (std), acc | aug loss, acc | ext agree, ext KL | public score if submitted.
+
+## Round 1 (plan by Philibert, 23:55)
+- Best public **0.304** = 0.2706 checkpoint with head scale 1.25 (`soup.py <ckpt> --head-scales 1.25`):
+  local forget loss 6.15 (2.04), ext KL 0.129. Sharper outputs help.
+- Withdrawn: "forgetting peaks at clean loss 5-5.5". Supported: longer training (50 ep, 0.2599) did not help,
+  sharper outputs did. No gap under ~0.01 counts until seed 1's public score gives the seed-to-seed gap.
+- Submission order: head scale 1.5 (if > 0.304 then 2.0, else keep 1.25 and stop), seed 1 raw, A (--clean-frac 0.2),
+  B (--alpha 3), init-LFSSD e20.
+- Diagnostic C (Philibert): is forget_images.npz class-sorted? All local metrics use the first 1000 images; if
+  sorted they cover ~8 classes and are biased -> switch --eval-n to a random subset.
