@@ -13,4 +13,4 @@ fi
 tag="$1"; shift
 rsync -a --exclude data --exclude .git --exclude .board --exclude .venv --exclude .idea --exclude models --exclude release --exclude output --exclude plots \
   -e "${ssh_cmd[*]}" ./ "$host:/p/scratch/training2666/savarimuthu1/teambuilders/code/savarimuthu1/"
-"${ssh_cmd[@]}" "$host" "source ~/.bashrc; D=\$TEAM_DIR/Hackathon_Watermark_Localisation_Task; R=\$TEAM_DIR/code/savarimuthu1; cd \$D && QTAG=$tag bash \$R/jureca/gpu_submit.sh \"PYTHONPATH=\$R/watermark WMLOC_MODELS=\$D/models \$D/.venv/bin/python \$R/$* \" | sed 's/^/[$tag] /'"
+"${ssh_cmd[@]}" "$host" "source ~/.bashrc; D=\$TEAM_DIR/Hackathon_Watermark_Localisation_Task; R=\$TEAM_DIR/code/savarimuthu1; cd \$D && QTAG=$tag bash \$R/jureca/gpu_submit.sh \"PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=\$R/watermark WMLOC_MODELS=\$D/models \$D/.venv/bin/python \$R/$* \" | sed 's/^/[$tag] /'"

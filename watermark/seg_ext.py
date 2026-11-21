@@ -17,6 +17,7 @@ import torch.nn.functional as F
 from rect_search import folds_of
 from seg_real import batch_x, load_split, plots, report
 from seg_train import loss_fn
+from wmloc.data import LocalisationDataset
 
 OUT = Path("output")
 RES = {"pixelseal": 256, "trustmark": 245, "stegastamp": 400}
@@ -87,6 +88,37 @@ class ExtSegmenter(nn.Module):
         return self.head(torch.cat(ups + [planes], 1))[:, 0]
 
 
+class CopyPaste:
+    """New training samples made of REAL watermarks (training fold only): clean blobs pasted onto real type A images
+    (new holes), and blobs of real type A images pasted into clean images (new transplanted objects)."""
+    def __init__(self, method, images, masks, full, tr, rng, n_blobs=300, n_carriers=400):
+        from synth import blob
+        self.rng, self.images, self.masks = rng, images, masks
+        self.donors = [i for i in tr if full[i]]
+        ds = [LocalisationDataset("release", s) for s in ("train", "test")]
+        pool = [(d, i) for d in ds for i, m in enumerate(d.meta) if m["method"] != method]
+        pick = rng.choice(len(pool), min(n_carriers, len(pool)), replace=False)
+        self.carriers = [pool[k][0][pool[k][1]]["image"] for k in pick]           # preloaded once (speed)
+        self.blobs = [blob(rng, rng.uniform(0.03, 0.3)).astype(bool) for _ in range(n_blobs)]
+
+    def sample(self):
+        r = self.rng
+        d = self.donors[r.integers(len(self.donors))]
+        clean = self.carriers[r.integers(len(self.carriers))]
+        b = self.blobs[r.integers(len(self.blobs))]
+        b = np.roll(b[:, ::-1] if r.random() < 0.5 else b, r.integers(-96, 97, 2), axis=(0, 1))
+        b128 = b.reshape(128, 4, 128, 4).mean((1, 3)) >= 0.5
+        if r.random() < 0.5:                       # new holes in a real watermarked image
+            img = self.images[d].copy(); img[b] = clean[b]
+            mask = self.masks[d] * (~b128)
+            acc = 0.97
+        else:                                      # a piece of a real watermarked image transplanted into a clean one
+            img = clean.copy(); img[b] = self.images[d][b]
+            mask = (self.masks[d] * b128).astype(np.uint8)
+            acc = 0.53
+        return img, mask.astype(np.uint8), np.array([acc], np.float32)
+
+
 @torch.no_grad()
 def predict(model, images, extra, device, batch=16):
     model.eval()
@@ -108,6 +140,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--synth", type=int, default=0, help="synthetic samples added per epoch (from output/<synth-set>_<method>.npz)")
     ap.add_argument("--synth-set", default="synth", help="synth (v1) or synthv2")
+    ap.add_argument("--copypaste", type=int, default=0, help="real-watermark copy-paste samples per epoch (training fold donors only)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
     torch.manual_seed(0)
@@ -129,27 +162,38 @@ def main():
     trunk = list(model.trunk.parameters())
     rest = [p for n, p in model.named_parameters() if not n.startswith("trunk.")]
     opt = torch.optim.AdamW([{"params": trunk, "lr": a.lr / 10}, {"params": rest, "lr": a.lr}], weight_decay=1e-4)
-    steps = a.epochs * ((len(tr) + a.synth + a.batch - 1) // a.batch)
+    steps = a.epochs * ((len(tr) + a.synth + a.copypaste + a.batch - 1) // a.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=[a.lr / 10, a.lr], total_steps=steps, pct_start=0.1)
     if a.synth:
         z = np.load(OUT / f"{a.synth_set}_{a.method}.npz")
         s_img, s_mask = z["images"], z["masks128"]
         s_extra = np.where(z["kinds"] == "full", 0.97, 0.53).astype(np.float32)[:, None]   # full-image decode, as measured on real data
         print(f"+ {a.synth} synthetic samples per epoch out of {len(s_img)}", flush=True)
+    if a.copypaste:
+        cp = CopyPaste(a.method, images, masks, full, tr, np.random.default_rng(1))
+        name += f"_cp{a.copypaste}"
+        print(f"+ {a.copypaste} copy-paste samples per epoch, {len(cp.carriers)} clean carriers, {len(cp.donors)} type A donors", flush=True)
     history, t0, probs = [], time.time(), None
     for epoch in range(1, a.epochs + 1):
         model.train()
         order = [("real", i) for i in rng.permutation(tr)]
         if a.synth:
             order += [("synth", i) for i in rng.choice(len(s_img), a.synth, replace=False)]
-            order = [order[k] for k in rng.permutation(len(order))]
+        if a.copypaste:
+            order += [("cp", i) for i in range(a.copypaste)]
+        order = [order[k] for k in rng.permutation(len(order))]
         losses = []
         for i in range(0, len(order), a.batch):
             chunk = order[i:i + a.batch]
-            pick = lambda real, syn: np.stack([real[j] if src == "real" else syn[j] for src, j in chunk])
-            x = batch_x(pick(images, s_img if a.synth else None), a.device)
-            y = torch.from_numpy(pick(masks, s_mask if a.synth else None)).float().to(a.device)
-            e = torch.from_numpy(pick(extra, s_extra if a.synth else None)).to(a.device)
+            gen = {k: cp.sample() for k, (src, _) in enumerate(chunk) if src == "cp"} if a.copypaste else {}
+            def pick(real, syn, field):
+                out = []
+                for k, (src, j) in enumerate(chunk):
+                    out.append(real[j] if src == "real" else syn[j] if src == "synth" else gen[k][field])
+                return np.stack(out)
+            x = batch_x(pick(images, s_img if a.synth else None, 0), a.device)
+            y = torch.from_numpy(pick(masks, s_mask if a.synth else None, 1)).float().to(a.device)
+            e = torch.from_numpy(pick(extra, s_extra if a.synth else None, 2)).to(a.device)
             if a.method != "stegastamp" and rng.random() < 0.5:     # StegaStamp decoding dies under a horizontal flip
                 x, y = x.flip(-1), y.flip(-1)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=a.device == "cuda"):

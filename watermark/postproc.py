@@ -23,7 +23,8 @@ from wmloc.utils import miou_image
 
 OUT = Path("output")
 GRID = {"thr": [0.3, 0.4, 0.5, 0.6], "lcc": [False, True], "snap": [0.8, 0.9, 1.01], "floor": [0.0, 0.03, 0.08],
-        "refine": [0.8, 0.9, 2.0]}           # 2.0 = never use the refined rectangle
+        "refine": [0.8, 0.9, 2.0],           # 2.0 = never use the refined rectangle
+        "rect": [True, False]}               # use the decoded rectangle of rect_search or not
 
 
 def oof_probs(method, source):
@@ -38,7 +39,7 @@ def oof_probs(method, source):
 
 
 def post(p, typeb, rect_box, prm, refined=None):
-    if rect_box is not None:
+    if rect_box is not None and prm.get("rect", True):
         return box_mask(rect_box)
     if refined is not None and refined[0] >= prm.get("refine", 2.0):
         return box_mask(refined[1])
@@ -70,7 +71,7 @@ def context(split):
         c = int(choose(np.array([fa]), np.array([ba]), *params[m])[0])
         info[n] = (fa < params[m][0], tuple(box) if c == 1 else None, None)  # (type B?, decoded rectangle, refined)
     f = OUT / f"refine_{split}.npz"
-    if f.exists():                                                        # rect_refine.py: (best accuracy, box)
+    if f.exists() and len(GRID["refine"]) > 1:                                                        # rect_refine.py: (best accuracy, box)
         z = np.load(f)
         for n, acc, box in zip(z["names"].tolist(), z["best_acc"], z["boxes"]):
             if n in info:
@@ -86,7 +87,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="pixelseal=synth400,trustmark=synth400,stegastamp=real_noflip")
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--no-refine", action="store_true", help="ignore rect_refine boxes (e.g. not computed on test yet)")
     a = ap.parse_args()
+    if a.no_refine:
+        GRID["refine"] = [2.0]
     sources = dict(kv.split("=") for kv in a.source.split(","))
     ds = LocalisationDataset("release", "train")
     gts = {m["image_name"]: ds.m128[m["image_name"]] for m in ds.meta}
@@ -130,7 +134,7 @@ def main():
         masks = np.stack([post(tprobs[n], tinfo[n][0], tinfo[n][1], chosen[test.meta[i]["method"]], tinfo[n][2]) for i, n in enumerate(names)])
         assert masks.shape == (1020, 128, 128) and len(set(names)) == 1020
         torch.save({"image_names": names, "masks": torch.from_numpy(masks).bool()}, OUT / "submission_post.pt")
-        print("wrote", OUT / "submission_post.pt")
+        print("wrote", OUT / "submission_post.pt", "| mean predicted watermarked share:", round(float(masks.mean()), 3))
 
 
 if __name__ == "__main__":
