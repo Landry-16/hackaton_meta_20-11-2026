@@ -16,7 +16,7 @@ import torch
 import torch.nn.functional as F
 
 from task_template import DEVICE, MODEL_FILE, load_forget_images, load_model, preprocess
-from ulib import T, augment, difficulty_caps, fmt, logits_views, proxy_report, proxy_retain, soft_target
+from ulib import T, augment, difficulty_caps, fmt, kl_t, logits_views, proxy_report, proxy_retain, soft_target
 
 
 def parse():
@@ -36,6 +36,9 @@ def parse():
     p.add_argument("--out", default="out/distill", help="checkpoint prefix, relative to the data folder")
     p.add_argument("--clean-frac", type=float, default=0.5, help="share of each forget batch left un-augmented")
     p.add_argument("--save-every", type=int, default=1, help="save + report every N epochs (and at the last one)")
+    p.add_argument("--external", default=None, help="npz of unlabeled external images (prepare_external.py) used as "
+                   "retain anchor instead of mixup/cutmix of forget images")
+    p.add_argument("--holdout", type=int, default=1000, help="last N external images: not trained on, used for drift")
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args()
 
@@ -54,7 +57,7 @@ def main():
     a = parse()
     torch.manual_seed(a.seed)
     caps_tag = f"cr{a.conf_min}-{a.conf_max}" if a.conf_min is not None else f"tc{a.target_conf}"
-    tag = f"{caps_tag}_tau{a.tau}_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_cf{a.clean_frac}"
+    tag = f"{caps_tag}_tau{a.tau}_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_cf{a.clean_frac}" + ("_ext" if a.external else "")
     out = Path(a.out + "_" + tag)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -75,6 +78,12 @@ def main():
         print(f"per-image caps: min {caps.min():.3f} median {caps.median():.3f} max {caps.max():.3f}")
     ev = imgs[: a.eval_n]
     orig_views = logits_views(teacher, ev)
+    ext_train = ext_eval = orig_ext = None
+    if a.external:
+        ext = load_forget_images(Path(a.external))  # same npz layout and checks
+        ext_train, ext_eval = ext[: -a.holdout], ext[-a.holdout:]
+        orig_ext = logits_views(teacher, ext_eval, views=("clean",))["clean"]
+        print(f"external retain anchor: {len(ext_train)} train / {len(ext_eval)} held-out images")
     opt = torch.optim.AdamW(params, lr=a.lr, weight_decay=0.0)
     steps = a.epochs * ((len(imgs) + a.bs - 1) // a.bs)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=steps, pct_start=0.1)
@@ -87,7 +96,10 @@ def main():
             x = preprocess(imgs[idx])
             keep = torch.rand(len(x), device=x.device) < a.clean_frac
             xf = torch.where(keep[:, None, None, None], x, augment(x))
-            xr = proxy_retain(augment(x))
+            if ext_train is not None:
+                xr = augment(preprocess(ext_train[torch.randint(len(ext_train), (len(x),))]))
+            else:
+                xr = proxy_retain(augment(x))
             with torch.no_grad(), torch.autocast(**amp):
                 zf, zr = teacher(xf).float(), teacher(xr).float()
             with torch.autocast(**amp):
@@ -113,6 +125,10 @@ def main():
         path = Path(f"{out}_e{ep}.pt")
         torch.save(sd, path)
         rep = proxy_report(orig_views, logits_views(student, ev))
+        if orig_ext is not None:
+            sub_ext = logits_views(student, ext_eval, views=("clean",))["clean"]
+            rep["ext"] = dict(kl_orig_sub=kl_t(orig_ext, sub_ext).mean().item(),
+                              agree=(orig_ext.argmax(1) == sub_ext.argmax(1)).float().mean().item())
         print(f"epoch {ep} ({time.time() - t0:.0f}s) forget_kl={tot[0] / len(imgs):.4f} retain_kl={tot[1] / len(imgs):.4f}"
               f" -> {path}\n  {fmt(rep)}", flush=True)
 
