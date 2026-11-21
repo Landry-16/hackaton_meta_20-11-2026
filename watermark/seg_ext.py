@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from rect_search import folds_of
-from seg_real import batch_x, load_split, plots, report
+from seg_real import load_synth, batch_x, load_split, plots, report
 from seg_train import loss_fn
 from wmloc.data import LocalisationDataset
 
@@ -175,9 +175,9 @@ def main():
     steps = a.epochs * ((len(tr) + a.synth + a.copypaste + a.batch - 1) // a.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=[a.lr / 10, a.lr], total_steps=steps, pct_start=0.1)
     if a.synth:
-        z = np.load(OUT / f"{a.synth_set}_{a.method}.npz")
+        z = load_synth(a.synth_set, a.method)
         s_img, s_mask = z["images"], z["masks128"]
-        s_extra = (z["acc"] if "acc" in z.files else np.where(z["kinds"] == "full", 0.97, 0.53)).astype(np.float32)[:, None]   # full-image decode
+        s_extra = (z["acc"] if "acc" in z else np.where(z["kinds"] == "full", 0.97, 0.53)).astype(np.float32)[:, None]   # full-image decode
         print(f"+ {a.synth} synthetic samples per epoch out of {len(s_img)}", flush=True)
     if a.copypaste:
         cp = CopyPaste(a.method, images, masks, full, tr, np.random.default_rng(1))

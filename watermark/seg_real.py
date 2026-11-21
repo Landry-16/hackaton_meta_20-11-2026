@@ -26,6 +26,16 @@ MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
 STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
 
+def load_synth(sets, method):
+    """One or several synthetic sets ("synthv3" or "synthv3,synthv3b"), concatenated."""
+    parts = [np.load(OUT / f"{s}_{method}.npz") for s in sets.split(",")]
+    out = {"images": np.concatenate([p["images"] for p in parts]), "masks128": np.concatenate([p["masks128"] for p in parts]),
+           "kinds": np.concatenate([p["kinds"] for p in parts])}
+    if all("acc" in p.files for p in parts):
+        out["acc"] = np.concatenate([p["acc"] for p in parts])
+    return out
+
+
 class RealSegmenter(nn.Module):
     def __init__(self, pretrained=True, extra=len(METHODS) + 1):
         super().__init__()
@@ -151,9 +161,9 @@ def main():
     synth = {}
     if a.synth:
         for k, m in enumerate(METHODS):
-            z = np.load(OUT / f"{a.synth_set}_{m}.npz")
+            z = load_synth(a.synth_set, m)
             onehot = np.zeros(len(METHODS) + 1, np.float32); onehot[k] = 1
-            ex = np.stack([onehot] * len(z["kinds"])); ex[:, -1] = z["acc"] if "acc" in z.files else np.where(z["kinds"] == "full", 0.97, 0.53)
+            ex = np.stack([onehot] * len(z["kinds"])); ex[:, -1] = z["acc"] if "acc" in z else np.where(z["kinds"] == "full", 0.97, 0.53)
             synth[m] = (z["images"], z["masks128"], ex)
         name += f"_{a.synth_set}{a.synth}"
     steps = a.epochs * ((len(tr) + a.synth * len(synth) + a.batch - 1) // a.batch)
