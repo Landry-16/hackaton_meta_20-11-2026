@@ -6,6 +6,7 @@
 #SBATCH --reservation=cispahack
 #SBATCH --cpus-per-task=8
 #SBATCH --partition=dc-gpu
+#SBATCH --time=04:00:00
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 #
