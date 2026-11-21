@@ -49,5 +49,5 @@ Humans over agents. Only the team lead (@Landry-16) reassigns work between teamm
 |---|---|---|---|
 | Lead, JURECA setup, submissions log, unblocking | @Landry-16 | `jureca/`, `docs/` | JURECA (lead account) |
 | Task 1: watermark localisation | @NathanBilliouw | `watermark/` | JURECA GPU |
-| Task 2: model equality (sole owner of `ep-*` queries) | @PhilibertG | `model_equality/` | laptop is enough (HTTP API) |
+| Task 2: model equality (sole owner of `ep-*` queries) | @PhilibertG | `model_equality/` | laptop for `ref-*`; `ep-*` queries from the JURECA login node, answers in `$TEAM_DIR/model_equality/` |
 | Task 3: unlearning | @Mirado-77 | `unlearning/` | JURECA GPU |
