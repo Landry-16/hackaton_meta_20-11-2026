@@ -70,7 +70,7 @@ def context(split):
         c = int(choose(np.array([fa]), np.array([ba]), *params[m])[0])
         info[n] = (fa < params[m][0], tuple(box) if c == 1 else None, None)  # (type B?, decoded rectangle, refined)
     f = OUT / f"refine_{split}.npz"
-    if f.exists():                                                        # rect_refine.py: (best accuracy, box)
+    if f.exists() and len(GRID["refine"]) > 1:                                                        # rect_refine.py: (best accuracy, box)
         z = np.load(f)
         for n, acc, box in zip(z["names"].tolist(), z["best_acc"], z["boxes"]):
             if n in info:
@@ -86,7 +86,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="pixelseal=synth400,trustmark=synth400,stegastamp=real_noflip")
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--no-refine", action="store_true", help="ignore rect_refine boxes (e.g. not computed on test yet)")
     a = ap.parse_args()
+    if a.no_refine:
+        GRID["refine"] = [2.0]
     sources = dict(kv.split("=") for kv in a.source.split(","))
     ds = LocalisationDataset("release", "train")
     gts = {m["image_name"]: ds.m128[m["image_name"]] for m in ds.meta}
@@ -130,7 +133,7 @@ def main():
         masks = np.stack([post(tprobs[n], tinfo[n][0], tinfo[n][1], chosen[test.meta[i]["method"]], tinfo[n][2]) for i, n in enumerate(names)])
         assert masks.shape == (1020, 128, 128) and len(set(names)) == 1020
         torch.save({"image_names": names, "masks": torch.from_numpy(masks).bool()}, OUT / "submission_post.pt")
-        print("wrote", OUT / "submission_post.pt")
+        print("wrote", OUT / "submission_post.pt", "| mean predicted watermarked share:", round(float(masks.mean()), 3))
 
 
 if __name__ == "__main__":
