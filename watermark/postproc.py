@@ -87,6 +87,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="pixelseal=synth400,trustmark=synth400,stegastamp=real_noflip")
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--test-prefix", default="seg_probs", help="seg_probs (single model) or seg_probs_ens (averaged)")
+    ap.add_argument("--out", default="submission_post.pt")
     ap.add_argument("--no-refine", action="store_true", help="ignore rect_refine boxes (e.g. not computed on test yet)")
     a = ap.parse_args()
     if a.no_refine:
@@ -128,13 +130,13 @@ def main():
         test = LocalisationDataset("release", "test")
         tprobs = {}
         for m in METHODS:
-            z = np.load(OUT / f"seg_probs_{m}_test.npz")
+            z = np.load(OUT / f"{a.test_prefix}_{m}_test.npz")
             tprobs.update(dict(zip(z["names"].tolist(), z["probs"].astype(np.float32))))
         names = [m["image_name"] for m in test.meta]
         masks = np.stack([post(tprobs[n], tinfo[n][0], tinfo[n][1], chosen[test.meta[i]["method"]], tinfo[n][2]) for i, n in enumerate(names)])
         assert masks.shape == (1020, 128, 128) and len(set(names)) == 1020
-        torch.save({"image_names": names, "masks": torch.from_numpy(masks).bool()}, OUT / "submission_post.pt")
-        print("wrote", OUT / "submission_post.pt", "| mean predicted watermarked share:", round(float(masks.mean()), 3))
+        torch.save({"image_names": names, "masks": torch.from_numpy(masks).bool()}, OUT / a.out)
+        print("wrote", OUT / a.out, "| mean predicted watermarked share:", round(float(masks.mean()), 3))
 
 
 if __name__ == "__main__":
