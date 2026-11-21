@@ -150,7 +150,7 @@ def tune(option_scores, full_acc, best_acc, use_rect=True):
 
 def folds_of(methods, full, k=5, seed=0):
     rng, fold = np.random.default_rng(seed), np.zeros(len(methods), int)
-    for key in set(zip(methods, full)):
+    for key in sorted(set(zip(methods, full))):         # sorted: same folds in every process (set order is random)
         idx = np.flatnonzero([(m, f) == key for m, f in zip(methods, full)])
         fold[rng.permutation(idx)] = np.arange(len(idx)) % k
     return fold

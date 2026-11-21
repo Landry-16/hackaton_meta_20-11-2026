@@ -63,14 +63,16 @@ def batch_x(images, device):
 
 
 @torch.no_grad()
-def predict(model, images, extra, device, batch=16):
+def predict(model, images, extra, device, batch=16, tta=True):
     model.eval()
     out = []
     for i in range(0, len(images), batch):
         x, e = batch_x(images[i:i + batch], device), torch.from_numpy(extra[i:i + batch]).to(device)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=device == "cuda"):
-            p = torch.sigmoid(model(x, e).float()) + torch.sigmoid(model(x.flip(-1), e).float()).flip(-1)   # flip TTA
-        out.append((p / 2).cpu().numpy())
+            p = torch.sigmoid(model(x, e).float())
+            if tta:                                                   # flip TTA
+                p = (p + torch.sigmoid(model(x.flip(-1), e).float()).flip(-1)) / 2
+        out.append(p.cpu().numpy())
     return np.concatenate(out)
 
 
@@ -125,13 +127,14 @@ def main():
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--no-flip", action="store_true", help="no flip augmentation or TTA (StegaStamp decoding dies under flips)")
     ap.add_argument("--save-methods", default=",".join(METHODS), help="with --fold all: methods whose test probabilities to write")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
     torch.manual_seed(0)
     rng = np.random.default_rng(0)
     print(f"device {a.device}, cuda available {torch.cuda.is_available()}", flush=True)
-    images, masks, methods, extra, full, _ = load_split("train", a.limit)
+    images, masks, methods, extra, full, _names = load_split("train", a.limit)
     fold = folds_of(methods, full)
     tr = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold != int(a.fold))
     ev = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold == int(a.fold))
@@ -150,9 +153,9 @@ def main():
             b = order[i:i + a.batch]
             x, y = batch_x(images[b], a.device), torch.from_numpy(masks[b]).float().to(a.device)
             e = torch.from_numpy(extra[b]).to(a.device)
-            if rng.random() < 0.5:
+            if not a.no_flip and rng.random() < 0.5:
                 x, y = x.flip(-1), y.flip(-1)
-            if rng.random() < 0.5:
+            if not a.no_flip and rng.random() < 0.5:
                 x, y = x.flip(-2), y.flip(-2)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=a.device == "cuda"):
                 loss = loss_fn(model(x, e).float(), y)
@@ -162,7 +165,7 @@ def main():
             sched.step()
             losses.append(loss.item())
         if a.fold != "all" and (epoch % 4 == 0 or epoch == a.epochs):
-            probs = predict(model, images[ev], extra[ev], a.device)
+            probs = predict(model, images[ev], extra[ev], a.device, tta=not a.no_flip)
             overall, rows = report(probs, masks[ev], methods[ev], full[ev])
             history.append((epoch, overall, rows))
             print(f"epoch {epoch}/{a.epochs} loss {np.mean(losses):.4f} held-out {overall:.4f} | " +
@@ -173,10 +176,10 @@ def main():
     torch.save(model.state_dict(), OUT / f"segreal_{name}.pt")
     if a.fold != "all":
         plots(name, history, images[ev], masks[ev], probs, methods[ev], full[ev])
-        np.savez(OUT / f"segreal_oof_{name}.npz", idx=ev, probs=probs.astype(np.float16))
+        np.savez(OUT / f"oof_real_{name}{'_noflip' if a.no_flip else ''}.npz", names=np.array(_names)[ev], probs=probs.astype(np.float16))
         return
     t_img, _, t_methods, t_extra, _, t_names = load_split("test")
-    probs = predict(model, t_img, t_extra, a.device).astype(np.float16)
+    probs = predict(model, t_img, t_extra, a.device, tta=not a.no_flip).astype(np.float16)
     for m in a.save_methods.split(","):
         s = t_methods == m
         np.savez(OUT / f"seg_probs_{m}_test.npz", names=np.array(t_names)[s], probs=probs[s])

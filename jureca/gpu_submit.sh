@@ -20,7 +20,7 @@ case "${1:-}" in
   cancel) rm -v "$Q/pending/$2.job"; exit 0 ;;
 esac
 mkdir -p "$Q/pending"
-name="$(date +%H%M%S)-$USER-$RANDOM"
+name="$(date +%H%M%S)-$USER-$RANDOM${QTAG:+-$QTAG}"
 printf 'OWNER=%q\nWORKDIR=%q\nCMD=%q\n' "$USER" "$PWD" "$1" > "$Q/pending/$name.job.tmp"
 mv "$Q/pending/$name.job.tmp" "$Q/pending/$name.job"
 echo "queued $name ($(ls "$Q"/pending/*.job | wc -l) pending). Follow it: bash jureca/gpu_submit.sh log $name"
