@@ -86,7 +86,7 @@ def main():
     chosen, rows = {}, []
     for method in METHODS:
         probs = oof_probs(method, sources[method])
-        names = sorted(probs)
+        names = sorted(n for n in probs if meta[n]["method"] == method)
         if not names:
             print(f"{method}: no OOF files yet"); continue
         full = np.array([bool(meta[n]["full_watermark"]) for n in names])
