@@ -82,3 +82,13 @@ python -c "from wmloc.data import unzip; unzip('train.zip', 'release'); unzip('t
 - **GPU nodes have no internet.** Anything that downloads on first use (weights, pip, Hugging Face) must run once on the login node first, or the job dies with `Address family not supported by protocol`.
 - Default job time is 1 h; `jureca/job.sh` asks for 4 h.
 - **One node per person at a time** (pending jobs count). The organizers cancel extra jobs and revoke access after repeated offenses. `jureca/run.sh` refuses to queue a second job.
+
+## Team GPU queue (one node per TEAM)
+Organizers: at most ONE job for the whole team, running or queued. Only Landry's `hold` job exists; everyone runs on it through a shared queue:
+```bash
+cd $TEAM_DIR/code/$USER && git pull
+bash jureca/gpu_submit.sh "source $TEAM_DIR/unlearning/.venv/bin/activate \&\& python my_script.py"   # runs in the current folder, on a free GPU
+bash jureca/gpu_submit.sh status
+bash jureca/gpu_submit.sh log <name>
+```
+The command runs on Landry's account, no internet (download on the login node first), outputs inside `$TEAM_DIR`. Never `sbatch` / `salloc` yourself.
