@@ -89,6 +89,7 @@ def main():
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--test-prefix", default="seg_probs", help="seg_probs (single model) or seg_probs_ens (averaged)")
     ap.add_argument("--out", default="submission_post.pt")
+    ap.add_argument("--raw-methods", default="", help="methods kept raw (thr 0.5, no rules) when tuning does not help in nested CV")
     ap.add_argument("--no-refine", action="store_true", help="ignore rect_refine boxes (e.g. not computed on test yet)")
     a = ap.parse_args()
     if a.no_refine:
@@ -121,6 +122,9 @@ def main():
         rows.append((method, len(names), base_scores.mean(), held_scores.mean(), d.mean(), d.std() / np.sqrt(len(d))))
         print(f"{method:10s} n={len(names)} raw {base_scores.mean():.4f} -> post-processed (nested CV) {held_scores.mean():.4f} "
               f"(paired gain {d.mean():+.4f} +- {d.std() / np.sqrt(len(d)):.4f}) | chosen {chosen[method]}", flush=True)
+    for m in filter(None, a.raw_methods.split(",")):
+        chosen[m] = dict(base_prm, refine=2.0, rect=False)
+        print(f"{m}: kept raw (nested CV showed no gain from tuning)")
     if rows:
         print(f"overall raw {np.mean([r[2] for r in rows]):.4f} -> post {np.mean([r[3] for r in rows]):.4f}")
         (OUT / "post_params.json").write_text(json.dumps(chosen))
