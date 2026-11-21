@@ -117,3 +117,19 @@ Learned: (1) the external anchor helps at equal forgetting; (2) score rises mono
 Rules now: ONE node per team, GPU only via `jureca/gpu_submit.sh`, max 2 unlearning jobs queued (Mirado + Philibert).
 Submitter: `submit_queue.py --queue logs/queue_v2.txt --log logs/submissions_v2.csv` (single-instance lock).
 Never submit a checkpoint whose external agreement is below ~0.80 (70 % validation gate).
+
+## Status (21 Nov, 23:40) - corrections from Philibert's review
+Best public: **0.2706** = caps 0.002-0.02 + `--external external_images.npz`, `--lr 2e-4 --epochs 35`
+(forget loss 5.25/1.56, acc 0.00; augmented loss 3.84, acc 0.105; ext agree 0.83). lr 1e-4 x 35 ep: 0.2505.
+Dead ends (comparable runs): weight soup of the two best (0.2446), lr 3e-4 x 20 (agree 0.81, less forgetting),
+LFSSD alone (drifts before it forgets), LFSSD as --init (same forgetting, agree 0.795).
+Caveats on earlier conclusions (runs NOT comparable, treat as open questions):
+- caps 0.001-0.01 "unstable": that run was killed by the disk error and judged on an earlier epoch.
+- --train-blocks 8: never finished (killed twice).
+- --other-tau 3 (0.0152): also far less forgetting (acc 0.98, loss 0.73), so "spreading kills the score" is
+  confounded with weak forgetting.
+- Scores of the old e20 checkpoints (0.1869, 0.2402) point to files later overwritten by e20 of 35-epoch runs.
+Fixed bugs: --seed had no effect and evaluation reset the training RNG (fixed 736663f); seed and total epochs are now
+in checkpoint names; the submitter skips files removed during its cooldown (e4bc00b).
+Open tests: --clean-frac 0.2 (augmented copies forgotten less than clean ones), --alpha 3 (retain weight),
+seed 1 of the best recipe (Philibert, running), lr 2e-4 x 50 ep (Mirado, running).
