@@ -49,8 +49,7 @@ def main():
     names, count, segs, t0 = [], [], [], time.time()
     for n, i in enumerate(idx):
         it = ds[i]
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            found = gen.generate(it["image"])
+        found = gen.generate(it["image"])                          # fp32: SAM's post-processing does not take bfloat16
         keep = [downsample_mask(m["segmentation"]) for m in sorted(found, key=lambda m: -m["area"])]
         keep = [k for k in keep if MIN_CELLS <= k.sum() <= k.size - MIN_CELLS]
         names.append(it["image_name"]); count.append(len(keep))
