@@ -236,3 +236,7 @@ error BEFORE recording a conclusion:
 3. Realised metrics match the requested ones (level mean/std, forget_kl converged, ext agreement plausible).
 4. File sane: ~344 MB, loads strict, float32, finite (proxy_metrics.py check_format).
 Only then mark the idea as rejected; otherwise write 'confounded / error' and re-run it cleanly if a slot allows.
+
+5. If a file scores >0.005 below its reference, run `audit_files.py` on it and the reference: a DUPLICATE fingerprint,
+   an mtime older than the run's end, or a forget loss far from the log's last `clean: ... loss_mean=` line means the
+   file is not the run it is named after (recycled `_free_NN.pt` keeping an old checkpoint after a crash).
