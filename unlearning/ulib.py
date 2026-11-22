@@ -73,16 +73,16 @@ def _fork_rng():
 
 
 @torch.no_grad()
-def difficulty_caps(model, images_u8, conf_min, conf_max, views=4, bs=128, seed=1):
+def difficulty_caps(model, images_u8, conf_min, conf_max, views=4, bs=128, seed=1, spacing="linear"):
     """Per-image target cap from how robust the original is under STRONG augmentation: the original's mean top-class
     probability (T=2, pseudo-label = clean argmax) over a few strong views, rank-mapped linearly to [conf_min, conf_max].
     Hard images (low robustness) get a low cap, so the loss spreads out like a never-seen model's."""
     model.eval()
     with _fork_rng():
-        return _difficulty_caps(model, images_u8, conf_min, conf_max, views, bs, seed)
+        return _difficulty_caps(model, images_u8, conf_min, conf_max, views, bs, seed, spacing)
 
 
-def _difficulty_caps(model, images_u8, conf_min, conf_max, views, bs, seed):
+def _difficulty_caps(model, images_u8, conf_min, conf_max, views, bs, seed, spacing="linear"):
     torch.manual_seed(seed)
     score = []
     for i in range(0, len(images_u8), bs):
@@ -94,7 +94,33 @@ def _difficulty_caps(model, images_u8, conf_min, conf_max, views, bs, seed):
         score.append(p.squeeze(1).float().cpu())
     score = torch.cat(score)
     rank = score.argsort().argsort().float() / max(len(score) - 1, 1)
+    if spacing == "log":  # same rank order, geometric spacing: wider spread of caps, so a wider loss spread
+        return conf_min * (conf_max / conf_min) ** rank
     return conf_min + (conf_max - conf_min) * rank
+
+
+@torch.no_grad()
+def class_wrong_dist(clean_logits: torch.Tensor) -> tuple:
+    """Per pseudo-class average of the original's NON-top distribution (softmax at T, top class removed, renormalised),
+    computed on the clean forget images. Returns (pseudo_labels [N], class_avg [C, C]); class_avg[c, c] = 0."""
+    p = (clean_logits.float() / T).softmax(1)
+    y = p.argmax(1)
+    p = p.scatter(1, y[:, None], 0.0)
+    p = p / p.sum(1, keepdim=True).clamp_min(1e-12)
+    c = p.shape[1]
+    avg = torch.zeros(c, c).index_add_(0, y, p)
+    cnt = torch.bincount(y, minlength=c).clamp_min(1).float()[:, None]
+    return y, avg / cnt
+
+
+def mix_class_target(target: torch.Tensor, z: torch.Tensor, class_avg_rows: torch.Tensor, w: float) -> torch.Tensor:
+    """Blend the per-image wrong-class mass with the class average, keeping the top-class mass unchanged:
+    target_new = (1 - w) * target + w * [top mass at top, (1 - top mass) * class average elsewhere]."""
+    top = z.argmax(1, keepdim=True)
+    ptop = target.gather(1, top)
+    other = class_avg_rows.to(target.device).scatter(1, top, 0.0)
+    other = other / other.sum(1, keepdim=True).clamp_min(1e-12) * (1 - ptop)
+    return (1 - w) * target + w * other.scatter(1, top, ptop)
 
 
 def kl_t(p_logits: torch.Tensor, q_logits: torch.Tensor) -> torch.Tensor:
