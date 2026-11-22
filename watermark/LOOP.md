@@ -46,13 +46,16 @@ jrlogin01 and jrlogin12 did not. Heavy steps without GPU (ranker, post-processin
    row without advancing, start one independent reviewer agent (Fable, read-only, no GPU, no submission) with the
    log below and the per-type scores; its ranked proposals become the next candidates. Reset the counter.
 
-## Current best (nested CV, 22 Nov 08:35, submission v17 = public 0.7843)
+## Current best (nested CV, 22 Nov 09:26, submission v18 = public 0.7931)
 | Method | Model | OOF source | CV raw | CV post |
 |---|---|---|---|---|
-| PixelSeal | extractor head, trunk at scales 1 and 2, real + 2000 synth v3+v3b per epoch | `synthv3,synthv3b2000_ms1-2_long` | 0.6758 | 0.7001 |
-| TrustMark | mean of `blend4` (four extractor heads) and the ImageNet model trained on TrustMark alone (12,000 v5 per epoch, fast mode) | `blend4_tm12` | 0.6996 | 0.7589 |
-| StegaStamp | mean of two ImageNet models trained on StegaStamp alone (6000 and 12,000 v5 per epoch), 6 models each | `so_blend` | 0.8659 | 0.8800 |
-| Overall | | | 0.7471 | 0.7797 |
+| PixelSeal | mean of 4 extractor heads: scales 1,2 (plain and flip-averaged), 4000 per epoch, scales 1,2 + 4000 per epoch | `ps4` | 0.6879 | 0.7206 |
+| TrustMark | mean of `blend4` (four extractor heads) and two seeds of the single-method ImageNet model (12,000 v5 per epoch) | `b4_tm12x2` | 0.6998 | 0.7662 |
+| StegaStamp | mean of two single-method ImageNet models (6000 and 12,000 v5 per epoch) | `so_blend` | 0.8659 | 0.8804 |
+| Overall | | | 0.7512 | 0.7891 |
+Seed noise (09:15): four seeds of the same single-method TrustMark model score 0.687, 0.674, 0.690, 0.682 on 5 folds,
+so a single run against a single run is uncertain by about 0.01 beyond its paired SE. Decisions are now taken on means
+of seeds / variants (`blend.py`), and final models are means of several fits.
 Test probabilities of the single-method ImageNet models are computed on the laptop (`ens_predict.py --real-tag ...
 --device mps`, 35 s per variant) after pulling the checkpoints; extractor heads need the cluster queue.
 How to build and submit now (login nodes have no /p/scratch since 06:35, compute nodes have no internet):
@@ -64,18 +67,17 @@ How to build and submit now (login nodes have no /p/scratch since 06:35, compute
 3. the file is copied to `~/sub/` on the login node and sent with `python3 ~/submit_login.py ~/sub/submission_vN.pt`
    (`jureca/submit_login.py`, key from `HACK_API_KEY`).
 
-## Candidates queued or running (08:40)
-- `dil` (Nathan's idea): last trunk stage dilated, deep features on a grid twice as fine, on top of scales 1,2.
-  PixelSeal against `synthv3,synthv3b2000_ms1-2_long` (0.6758), TrustMark against `..4000_ms1-2_l4k` (0.6620).
-- PixelSeal `ms4k` (5 folds + all, finishing); then PixelSeal means: `ps3` = mean(ms, ms flip-averaged, l4k) already
-  passes (+0.0054 +- 0.0027), test probabilities queued.
-- `so24`: StegaStamp alone, 24,000 per epoch out of 48,000 (fast mode). TrustMark v5e to v5h being generated for the
-  same.
-- Fast mode (`seg_real.py --fast --batch 32 --lr 6e-4`): float16 + channels-last + batch 32, 3 times faster in wall
-  clock, same score on 5 folds (0.8587 against 0.8531).
-Closed today: pseudo-labels on the single-method StegaStamp model (-0.003); single-method ImageNet model for
-PixelSeal (0.46 to 0.55); PixelSeal pseudo-labels with scales 1,2 (stopped for GPUs); "real holes are smoother"
-(they have 21 % less detail than their surroundings, tattooed rectangles 29 % more: it is the watermark itself).
+## Candidates queued or running (09:45)
+- v19 being built: StegaStamp `soC` (24,000 per epoch out of 48,000, counted twice, + three 12,000 seeds; the 24,000
+  model alone: +0.0183 +- 0.0056 over 12,000), TrustMark `b4_tm12x4` (four seeds).
+- Running: StegaStamp 24,000 seeds 1 and 2; TrustMark single-method at 24,000; PixelSeal and TrustMark heads at
+  8000 per epoch, scales 1,2 (end about 10:50 and 10:35); PixelSeal scales 1,2 + 4000 seed 1; PixelSeal dilated
+  (2000: 4 folds left; 4000: end about 09:55).
+- Nathan's Claude (account billiouw1) runs for us: scales 1,2,3 for PixelSeal `long` and TrustMark `l4k`, a
+  single-method ImageNet model for PixelSeal, PixelSeal seeds. He posts OOF source names; we build and submit.
+- Rejected: dilated trunk for TrustMark (-0.0008 +- 0.0039 on 5 folds).
+- Compute: 9 nodes (1 reservation + 8 unreserved, all checked), one job per GPU except the reservation node (2 per
+  GPU, twice slower: short jobs only).
 
 ## Decisions of 05:15 to 05:45 (all on 5 folds, paired)
 | Method | Candidate against | Gain | Decision |
@@ -201,3 +203,4 @@ vs 0.659).
 | 12 | 07:40 | StegaStamp single-method model, 3 folds of 5 (+0.0373 +- 0.0096 on 102 images) | v15 submitted with the deviation described under "Current best". 07:05 to 07:35: account outage, all jobs lost; `~/recover.sh` restarted the team node, the queue and 3 unreserved nodes at 07:36 | 0.7646 | 0.7746 | 0 |
 | 13 | 08:20 | single-method StegaStamp on 5 folds (+0.0355 +- 0.0073 against 3000), mean with its 12,000 variant (+0.0128 +- 0.0033) | v16 submitted | 0.7729 | 0.7771 | 0 |
 | 14 | 08:35 | TrustMark: `blend4` + single-method ImageNet model at 12,000 (+0.0275 +- 0.0072) | v17 submitted. Speed: `bench_speed.py`, fast mode adopted for the ImageNet models | 0.7797 | 0.7843 | 0 |
+| 15 | 09:26 | PixelSeal scales 1,2 + 4000 (+0.0128 +- 0.0042), mean of 4 PixelSeal heads; TrustMark second seed | v18 submitted. 5 more unreserved nodes at 08:40 (Landry's request, checked not reserved) | 0.7891 | 0.7931 | 0 |
