@@ -26,9 +26,10 @@ GRID = {"thr": [0.4, 0.5, 0.6], "lcc": [False, True], "snap": [0.8, 1.01], "floo
         "refine": [0.8, 2.0],                # accept the exhaustive-search rectangle above this bit accuracy; 2.0 = never
         "rect": [False],                     # old coarse rect_search override, superseded by global_rect.py
         "seg": ["off", "greedy", "voteb", "rank"],   # type B images, SAM object segments: sam_snap.py rules or the
-        "segA": ["off", "greedy"]}                   # learned candidate ranker of seg_rank.py; segA: type A images
+        "segA": ["off", "greedy"],                   # learned candidate ranker of seg_rank.py; segA: type A images
+        "thrA": [0.5, 0.6, 0.7, 0.8]}                # threshold of type A images (holes are under-detected at 0.5)
 RAW_GRID = {"thr": [0.5], "lcc": [False], "snap": [1.01], "floor": [0.0], "refine": [0.8, 2.0], "rect": [False],
-            "seg": ["off", "greedy", "voteb", "rank"], "segA": ["off", "greedy"]}
+            "seg": ["off", "greedy", "voteb", "rank"], "segA": ["off", "greedy"], "thrA": [0.5, 0.6, 0.7, 0.8]}
 SEGS, RANKED, _SEG_CACHE = {}, {}, {}        # name -> K x 128 x 128 segments; name -> ranker mask; (name, rule, thr) -> mask
 
 
@@ -60,10 +61,11 @@ def post(p, typeb, rect_box, prm, refined=None, name=None):
         return box_mask(refined[1])
     if rect_box is not None and prm.get("rect", True):
         return box_mask(rect_box)
-    m = (p >= prm["thr"]).astype(np.uint8)
+    thr = prm["thr"] if typeb else prm.get("thrA", prm["thr"])
+    m = (p >= thr).astype(np.uint8)
     rule = prm.get("seg", "off") if typeb else prm.get("segA", "off")
     if rule != "off" and name in SEGS:
-        m = snapped(name, p, typeb, rule, prm["thr"])
+        m = snapped(name, p, typeb, rule, thr)
     if typeb and prm["lcc"] and m.any():
         lab, n = ndimage.label(m)
         if n > 1:
@@ -110,6 +112,7 @@ def main():
     ap.add_argument("--out", default="submission_post.pt")
     ap.add_argument("--raw-methods", default="", help="methods kept raw (thr 0.5, no rules) when tuning does not help in nested CV")
     ap.add_argument("--no-refine", action="store_true", help="ignore rect_refine boxes (e.g. not computed on test yet)")
+    ap.add_argument("--drop", default="", help="grid options switched off (first value kept), e.g. thrA,segA: to measure what an option adds")
     ap.add_argument("--seg", action="store_true", help="allow the SAM segment snapping rules (needs output/sam_<split>_*.npz)")
     a = ap.parse_args()
     if a.seg:
@@ -123,6 +126,8 @@ def main():
             RANKED.update(zip(z["names"].tolist(), np.unpackbits(z["masks"], axis=1).reshape(-1, 128, 128)))
     else:
         GRID["seg"] = RAW_GRID["seg"] = GRID["segA"] = RAW_GRID["segA"] = ["off"]
+    for key in filter(None, a.drop.split(",")):
+        GRID[key], RAW_GRID[key] = GRID[key][:1], RAW_GRID[key][:1]
     if a.no_refine:
         GRID["refine"] = RAW_GRID["refine"] = [2.0]
     sources = dict(kv.split("=") for kv in a.source.split(";" if ";" in a.source else ","))   # ";" when a source name holds a comma

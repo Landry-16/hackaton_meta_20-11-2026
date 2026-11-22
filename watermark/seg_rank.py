@@ -18,7 +18,7 @@ from wmloc.utils import miou_image
 
 OUT = Path("output")
 KINDS = ("segment", "raw", "lcc", "box", "greedy", "vote")
-SEEDS, STEPS, TEMP = 5, 300, 0.05                # fixed before any result
+SEEDS, STEPS, TEMP = 20, 300, 0.05               # fixed; 20 seeds: 5 gave picks that changed from one run to the next
 
 
 def candidates(p, segs):
