@@ -30,11 +30,16 @@ def main():
     ap.add_argument("--sources", default="", help="OOF sources separated by ;")
     ap.add_argument("--test", default="", help="test probability prefixes separated by ;")
     a = ap.parse_args()
-    if a.sources:
-        for k in range(5):
-            names, probs = mean_by_name([OUT / f"oof_ext_{a.method}_fold{k}_{s}.npz" for s in a.sources.split(";")])
-            np.savez(OUT / f"oof_ext_{a.method}_fold{k}_{a.name}.npz", names=names, probs=probs)
-        print(f"{a.method}: {a.name} = mean of {len(a.sources.split(';'))} variants, 5 folds written")
+    if a.sources:                                               # any OOF source postproc.py knows (seg_ext or real_...)
+        from postproc import oof_probs
+        parts = [oof_probs(a.method, src) for src in a.sources.split(";")]
+        names = sorted(set.intersection(*(set(d) for d in parts)))
+        assert len(names) == 170, f"{len(names)} images are covered by all the variants, 170 expected"
+        probs = np.stack([np.mean([d[n] for d in parts], 0) for n in names]).astype(np.float16)
+        for k in range(1, 5):
+            (OUT / f"oof_ext_{a.method}_fold{k}_{a.name}.npz").unlink(missing_ok=True)
+        np.savez(OUT / f"oof_ext_{a.method}_fold0_{a.name}.npz", names=np.array(names), probs=probs)   # one file holds the 5 folds
+        print(f"{a.method}: {a.name} = mean of {len(parts)} variants, {len(names)} images written")
     if a.test:
         names, probs = mean_by_name([OUT / f"{p}_{a.method}_test.npz" for p in a.test.split(";")])
         np.savez(OUT / f"seg_probs_ens_{a.method}_test.npz", names=names, probs=probs)

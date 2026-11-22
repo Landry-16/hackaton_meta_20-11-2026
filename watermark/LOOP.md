@@ -2,6 +2,14 @@
 
 One iteration = read results, decide, submit if earned, refill the GPUs, log. Runs until the stop condition.
 
+## Compute (22 Nov 06:30)
+The team node is the reservation job `hold` (jrc0233): GPUs 2-3 for the watermark queue (3 slots each), GPUs 0-1
+borrowed while the teammates leave them idle. Nodes OUTSIDE the reservation are allowed without limit (Michel,
+06:25), but the reservation is MAGNETIC and attracts our jobs: three of the six extra nodes of 03:43 to 06:23 were
+reserved ones and had to be cancelled. Rule: `sbatch --exclude=<reservation node list>` (see `jureca/hold_general.sh`),
+and `~/start_nodeN.sh <jobid>` cancels the job at once if it lands on a reserved node, otherwise starts a queue with
+one job per GPU. Heavy steps without GPU (ranker, post-processing) run on the laptop.
+
 ## Stop
 - public score at or above 0.72 (top 5 level on 22 Nov, 01:00), or
 - Sunday 22 Nov 11:00 Paris time: stop experiments, check that the best validated submission is the one on the board
@@ -36,25 +44,51 @@ One iteration = read results, decide, submit if earned, refill the GPUs, log. Ru
    row without advancing, start one independent reviewer agent (Fable, read-only, no GPU, no submission) with the
    log below and the per-type scores; its ranked proposals become the next candidates. Reset the counter.
 
-## Current best (nested CV, 22 Nov 04:55, submission v11 = public 0.7167)
-| Method | Model | OOF source | CV raw | CV post (rectangles + segments) |
+## Current best (nested CV, 22 Nov 06:15, submission v13 = public 0.7628)
+| Method | Model | OOF source | CV raw | CV post |
 |---|---|---|---|---|
-| PixelSeal | extractor head, real + 2000 synth v3+v3b per epoch, 60 epochs | `synthv3,synthv3b2000_long` | 0.6330 | 0.6642 |
-| TrustMark | same, prediction averaged with the mirrored image | `synthv3,synthv3b2000_long_tta` | 0.6370 | 0.7200 |
-| StegaStamp | ImageNet ResNet-34, real + synth v3 | `real_synthv3300` | 0.6794 | 0.7133 |
-| Overall | | | 0.6498 | 0.6991 |
-Build (login node): `ens_predict.py --tag "synthv3,synthv3b2000_long" --methods trustmark --tta` (GPU), then with
-SRC = `pixelseal=synthv3,synthv3b2000_long;trustmark=synthv3,synthv3b2000_long_tta;stegastamp=real_synthv3300`:
-`seg_rank.py --source "$SRC" --apply` and
-`postproc.py --source "$SRC" --raw-methods pixelseal --seg --test-prefix seg_probs_ens --out submission_v11.pt --apply`
+| PixelSeal | extractor head, trunk at scales 1 and 2, real + 2000 synth v3+v3b per epoch | `synthv3,synthv3b2000_ms1-2_long` | 0.6758 | 0.7005 |
+| TrustMark | mean of two heads (scales 1,2 / 4000 per epoch), flip-averaged | `blend_ms_l4k_tta` | 0.6648 | 0.7371 |
+| StegaStamp | ImageNet ResNet-34, real + 1000 synth v5 per method per epoch | `real_synthv5,synthv5b1000` | 0.7933 | 0.8169 |
+| Overall | | | 0.7113 | 0.7515 |
+Build: test probabilities with `ens_predict.py` (GPU queue; `--out-prefix` + `blend.py --test` for a mean of
+variants), then ON THE LAPTOP (the login node and shared compute nodes are 20 times slower for this step):
+`rsync` the OOF / test probability files into `watermark/output`, `seg_rank.py --source "$SRC" --apply`,
+`postproc.py --source "$SRC" --raw-methods pixelseal --seg --test-prefix seg_probs_ens --out submission_vN.pt --apply`,
+`rsync` the submission back and submit from the cluster.
 
-## Candidates queued or running (05:00)
-- `l4k`: 4000 synth per epoch out of v3+v3b+v3c (more volume again), 5 folds, against `long`.
-- `ms`: `long` with the trunk also at twice the resolution (`--scales 1,2`), 5 folds, against `long` (about 50 min).
-- `v5`: synthetic recipe v5 (object regions and a third of the holes are SAM segments of the image, as in the real
-  data) instead of v3: PixelSeal / TrustMark `synthv5,synthv5b2000_long`, StegaStamp `real_synthv5,synthv5b300`,
-  5 folds + fold all. `v35` = v3 + v5 pooled, adopted only if it beats `v5` itself under the rule.
-- Flip averaging for PixelSeal stays off (+0.0047 +- 0.0025, under the rule).
+## Candidates queued or running (06:25, in priority order, one node)
+1. StegaStamp 3000 per method, fold 4 (the 4 other folds: +0.0195 +- 0.0083 against 1000).
+2. `pl13`: StegaStamp model + the 1020 test images labelled by submission v13, 5 folds + all.
+3. `onlyst`: ImageNet model trained on StegaStamp alone, 6000 v5 samples per epoch out of 24,000, 5 folds + all.
+4. `ms4k` PixelSeal (scales 1,2 and 4000 per epoch; the same change gave TrustMark +0.015), 5 folds + all.
+5. `pl13` PixelSeal (scales 1,2 + pseudo-labels), 5 folds.
+Dropped with the extra nodes: scales 1,2,3; 8000 per epoch; multi-method 6000; single-method TrustMark / PixelSeal.
+Ready, not yet submitted: TrustMark `blend4` (mean of 4 variants, +0.0073 +- 0.0019 over the current mean).
+Rejected: adding the ImageNet model to the PixelSeal / TrustMark heads (-0.019, -0.038).
+
+## Decisions of 05:15 to 05:45 (all on 5 folds, paired)
+| Method | Candidate against | Gain | Decision |
+|---|---|---|---|
+| TrustMark | 4000 per epoch (`l4k`) vs `long` | +0.0132 +- 0.0059 | adopted |
+| TrustMark | scales 1,2 (`ms`) vs `long` | +0.0190 +- 0.0061 | adopted |
+| TrustMark | mean of `ms` and `l4k`, both flip-averaged, vs `ms` flip-averaged | +0.0149 +- 0.0037 | adopted (0.6648) |
+| TrustMark | adding `long` to that mean | -0.0086 +- 0.0024 | rejected |
+| TrustMark | v5 instead of v3, v3+v5 | -0.003, +0.001 | rejected |
+| PixelSeal | `l4k` vs `long` | +0.0107 +- 0.0048 | passes |
+| PixelSeal | `ms` vs `long` | +0.0428 +- 0.0067 | adopted (0.6758) |
+| PixelSeal | mean of `ms` and `l4k` vs `ms` | +0.003 | rejected (`ms` alone) |
+| PixelSeal | flip averaging on `ms` | +0.0035 +- 0.0027 | rejected |
+| PixelSeal | v5 instead of v3 / v3+v5 | +0.0066 +- 0.0049 / +0.0084 +- 0.0037 | first rejected, second passes but is below `ms` |
+| StegaStamp | recipe v5, 300 per method, vs v3 | +0.0164 +- 0.0082 | adopted |
+| StegaStamp | v5, 1000 per method, vs 300 | +0.0975 +- 0.0098 | adopted (0.7933) |
+Post-processing: type A threshold option `thrA` (+0.006 nested CV); option search split by image type (same
+result, 6 times faster); ranker averaged over 20 seeds (5 gave picks that moved between runs).
+Checked and dropped: best-fit rectangle as a ranker candidate (0.678 vs 0.684); StegaStamp rectangle search from
+the prediction box (only 15 to 18 % of the boxes have their four edges within 16 px of the truth, the decode basin is
+2 to 4 px wide: expected +0.005 at best).
+Type A diagnosis: hole recall 0.41 to 0.50, precision 0.53 to 0.84; small holes (under 150 cells) are missed
+(recall 0.05 for PixelSeal / TrustMark).
 
 ## Segment snapping (declared 04:20, BEFORE any result)
 Observation on 16 real train images: the object-shaped regions follow the object contours of the image itself (the
@@ -151,3 +185,5 @@ vs 0.659).
 | 6 | 04:00 | underfitting screens (table above) | volume is the fix: `long` and `big` queued on 5 folds + fold all (24 jobs); 3 more general-queue nodes requested (start estimated 04:45), 1 job per GPU; 106 rejected files deleted (inode quota at 2,600 free) | 0.6691 | 0.6743 | 0 |
 | 7 | 04:35 | `long` 5 folds: TrustMark +0.0235 +- 0.0062, PixelSeal +0.0146 +- 0.0067 (both adopted); `big` against `long`: -0.002 and -0.006 (rejected); SAM gate (table above) | v10 = `long` models + segment snapping, submitted | 0.6854 | 0.6950 | 0 |
 | 8 | 05:00 | flip averaging on the saved fold models (TrustMark +0.0086 +- 0.0028 adopted, PixelSeal +0.0047 +- 0.0025 kept off); candidate ranker (type B: +0.032 over the best hand rule) | v11 = v10 + TrustMark flip averaging + ranker, submitted; v5 data generated (12,000 per method); 40 jobs queued; 2 more general nodes requested (7 in total) | 0.6991 | 0.7167 | 0 |
+| 9 | 05:40 | decisions table above | v12 = TrustMark mean of two variants + StegaStamp v5 + type A threshold, submitted | 0.7068 | 0.7311 | 0 |
+| 10 | 06:15 | PixelSeal scales 1,2 (+0.043), StegaStamp v5 at 1000 per method (+0.098) | v13 submitted. Organizers (05:58): any available data may be used, unlabeled test images included: pseudo-label runs queued (`--pseudo output/submission_v13.pt`). Their CV is slightly optimistic (the teacher saw the held-out labels), so the bar is +0.01 and the public score must move the same way | 0.7515 | 0.7628 | 0 |
