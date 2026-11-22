@@ -177,3 +177,17 @@ Result format: command | clean loss (std), acc | aug loss, acc | ext agree, ext 
   augmentations only.
 - Round 4: 4a diag of the best model under 15 unseen alterations; 4b total head scale 1.40; 4c new options
   --cap-spacing log and --class-mix w (commit 5672238). Keep the raw checkpoint of every submitted model.
+
+## Rounds 4-9 summary (22 Nov, 03:20)
+Best public **0.3888** = out/r7b_capcount01_s1.4.pt: `unlearn_distill.py --conf-min 0.001 --conf-max 0.1 --cap-by count
+--external external_images.npz --lr 2e-4 --epochs 35 --clean-frac 0.0` then `soup.py <ckpt> --head-scales 1.4`
+(local: clean loss 3.43 (1.79), aug 3.70 (2.02), ext KL 0.082 before head scaling).
+Head scale peak ~1.40 (1.25 / 1.40 / 1.55 = 0.362 / 0.3801 / 0.3471 uniform; 0.388 / 0.3839 at 1.40 / 1.55 graded).
+Plateau 0.385-0.389: forgetting level and per-class gradation (--cap-by count) are each worth ~0.005.
+Dropped (each compared at equal forgetting): --cap-spacing log (loss std unchanged), --class-mix 0.5 (flatter,
+forgets less), --other-tau 0.75 (0.3621 at 1.40), --train-blocks 8 (ext KL 0.097), --train-blocks 2 (no retain gain),
+mask45 (0.0, gate). Forgetting transfers to 15 unseen alterations (acc <= 0.11, only crop 60 % weaker at 0.18).
+Infra: outputs reserved at start (inode quota), submitter skips files < 100 MB, data on GPU + 64 CPU cores:
+35-epoch run ~4 min. Server cooldown 10 min.
+Open: Caltech-256 retain anchor (Philibert, waiting for his go). Final file = best public (r7b_capcount01_s1.4.pt)
+unless something beats it; which submission counts for the final ranking is still unconfirmed by the organizers.
