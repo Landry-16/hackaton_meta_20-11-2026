@@ -166,3 +166,14 @@ Result format: command | clean loss (std), acc | aug loss, acc | ext agree, ext 
 - Pending: A + head 1.25 (clean 5.32, aug 4.64, ext agree 0.83, KL 0.137).
 
 - 22 Nov 01:00: Mirado and Philibert both gave a standing go: Philibert's Claude writes and directs the rounds; Mirado can overrule. Philibert may run steps directly (GPU queue, files in out/, append to logs/queue_v2.txt).
+
+## Round 3 results / round 4 (22 Nov, 01:40)
+- Best public **0.362** = --clean-frac 0.0 (caps 0.002-0.02 + --external, lr 2e-4 x 35 ep) with head scale 1.25.
+  At head x1.25: clean-frac 0.5 / 0.2 / 0.0 = 0.304 / 0.3398 / 0.362; clean loss 5.25 / 4.64 / 3.80, aug ~4.0:
+  clean images were over-forgotten.
+- --other-tau 0.5: student cannot reach the sharper targets in 35 epochs (forget_kl 0.68 vs 0.2), forgetting collapses.
+- Review (Philibert): score / (R x S) is ~constant over 8 runs (S = loss mean + std clean + aug, R = 1/(1+ext KL)):
+  lr / epochs / alpha / soups only move along that line. Loss std is never targeted. 'aug' uses the training
+  augmentations only.
+- Round 4: 4a diag of the best model under 15 unseen alterations; 4b total head scale 1.40; 4c new options
+  --cap-spacing log and --class-mix w (commit 5672238). Keep the raw checkpoint of every submitted model.
