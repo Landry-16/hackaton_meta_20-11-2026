@@ -35,7 +35,27 @@ def candidates(p, segs):
     return [(m, k) for m, k in out if m.any() and not m.all()]
 
 
-def features(p, cands, method_id):
+_JND = {}
+
+
+def jnd_map(image):
+    """128 x 128 perceptual masking map of an image (the map PixelSeal multiplies its residual by): where a watermark
+    can be strong. Mean 1. Computed with the kit's own JND module."""
+    if "mod" not in _JND:
+        import os, sys
+        import torch
+        models = Path(os.environ.get("WMLOC_MODELS", Path(__file__).resolve().parent / "models"))
+        sys.path.insert(0, str(models / "videoseal"))
+        from videoseal.modules.jnd import JND
+        _JND["mod"], _JND["torch"] = JND(in_channels=1, out_channels=1), torch
+    torch = _JND["torch"]
+    with torch.no_grad():
+        h = _JND["mod"].heatmaps(torch.from_numpy(image).permute(2, 0, 1)[None].float() / 255)[0, 0]
+    j = h.reshape(128, 4, 128, 4).mean((1, 3)).numpy()
+    return j / max(float(j.mean()), 1e-6)
+
+
+def features(p, cands, method_id, jnd=None):
     m = np.stack([c[0] for c in cands]).reshape(len(cands), -1).astype(np.float32)
     pf, n = p.ravel().astype(np.float32), p.size
     area, sp = m.sum(1), pf.sum()
@@ -56,6 +76,12 @@ def features(p, cands, method_id):
     for v in (soft1, (soft1 + soft0) / 2):                      # position inside the image's own candidate list
         cols += [v - v.max(), np.argsort(np.argsort(-v)) / len(v)]
     cols += [np.full(len(cands), sp / n), np.full(len(cands), pf.max()), np.full(len(cands), len(cands) / 100)]
+    if jnd is not None:                                          # the same agreement measures, each cell weighted by
+        w = jnd.ravel().astype(np.float32)                       # how strong a watermark can be there
+        wp, wsum = w * pf, float(w.sum())
+        iw, aw = m @ wp, m @ w
+        cols += [iw / np.maximum(aw, 1e-6), (wp.sum() - iw) / np.maximum(wsum - aw, 1e-6), iw / max(float(wp.sum()), 1e-6),
+                 iw / np.maximum(wp.sum() + aw - iw, 1e-6), aw / np.maximum(area, 1), aw / wsum]
     kind = np.eye(len(KINDS), dtype=np.float32)[[KINDS.index(k) for _, k in cands]]
     meth = np.tile(np.eye(3, dtype=np.float32)[method_id], (len(cands), 1))
     return np.concatenate([np.stack(cols, 1).astype(np.float32), kind, meth], 1)
@@ -94,11 +120,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", required=True)
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--jnd", action="store_true", help="add the JND-weighted agreement features")
+    ap.add_argument("--out", default="rank", help="output/<out>_train.npz and <out>_test.npz")
     ap.add_argument("--test-prefix", default="seg_probs_ens")
     a = ap.parse_args()
     src = dict(x.split("=") for x in a.source.split(";"))
     ds, segs, info = LocalisationDataset("release", "train"), load_segments("train"), context("train")
     meta = {m["image_name"]: m for m in ds.meta}
+    index = {m["image_name"]: i for i, m in enumerate(ds.meta)}
     items = []                                                  # one per type B train image (type from the decode, as at test)
     for mi, method in enumerate(METHODS):
         probs = oof_probs(method, src[method])
@@ -109,7 +138,8 @@ def main():
                 continue
             cands = candidates(probs[n], segs[n])
             gt = ds.m128[n]
-            items.append({"name": n, "method": method, "fold": int(k), "cands": cands, "x": features(probs[n], cands, mi),
+            jm = jnd_map(ds[index[n]]["image"]) if a.jnd else None
+            items.append({"name": n, "method": method, "fold": int(k), "cands": cands, "x": features(probs[n], cands, mi, jm),
                           "y": np.array([miou_image(c.astype(np.uint8), gt) for c, _ in cands], np.float32),
                           "full": bool(meta[n]["full_watermark"]), "empty": miou_image(np.zeros_like(gt), gt)})
     print(f"{len(items)} type B train images, {np.mean([len(i['cands']) for i in items]):.0f} candidates per image", flush=True)
@@ -130,18 +160,20 @@ def main():
                   + f" | ranker {np.mean([i['y'][i['pick']] for i in r]):.4f} | best candidate {np.mean([i['y'].max() for i in r]):.4f}"
                   + f" | ranker - vote {d.mean():+.4f} +- {d.std(ddof=1) / np.sqrt(len(d)):.4f} | picks "
                   + " ".join(f"{kk}:{sum(i['cands'][i['pick']][1] == kk for i in r)}" for kk in KINDS), flush=True)
-    np.savez(OUT / "rank_train.npz", names=np.array(list(picked)), masks=np.packbits(np.stack([picked[n].ravel() for n in picked]), axis=1))
+    np.savez(OUT / f"{a.out}_train.npz", names=np.array(list(picked)), masks=np.packbits(np.stack([picked[n].ravel() for n in picked]), axis=1))
     if a.apply:
         score = fit([(i["x"], i["y"]) for i in items])
         test, tsegs, tinfo = LocalisationDataset("release", "test"), load_segments("test"), context("test")
+        tindex = {m["image_name"]: i for i, m in enumerate(test.meta)}
         out = {}
         for mi, method in enumerate(METHODS):
             z = np.load(OUT / f"{a.test_prefix}_{method}_test.npz")
             for n, p in zip(z["names"].tolist(), z["probs"].astype(np.float32)):
                 if tinfo[n][0] and n in tsegs:
                     cands = candidates(p, tsegs[n])
-                    out[n] = cands[int(np.argmax(score(features(p, cands, mi))))][0]
-        np.savez(OUT / "rank_test.npz", names=np.array(list(out)), masks=np.packbits(np.stack([out[n].ravel() for n in out]), axis=1))
+                    jm = jnd_map(test[tindex[n]]["image"]) if a.jnd else None
+                    out[n] = cands[int(np.argmax(score(features(p, cands, mi, jm))))][0]
+        np.savez(OUT / f"{a.out}_test.npz", names=np.array(list(out)), masks=np.packbits(np.stack([out[n].ravel() for n in out]), axis=1))
         print(f"wrote rank_test.npz: {len(out)} type B test images", flush=True)
 
 
