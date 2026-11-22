@@ -50,7 +50,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--queue", default="logs/queue.txt")
     p.add_argument("--log", default="logs/submissions.csv")
-    p.add_argument("--cooldown", type=int, default=365, help="seconds between two submissions")
+    p.add_argument("--cooldown", type=int, default=365, help="seconds between the START of two submissions")
     p.add_argument("--poll", type=int, default=30, help="seconds between queue checks when it is empty")
     p.add_argument("--min-bytes", type=int, default=100_000_000, help="skip smaller files (empty reserved files)")
     p.add_argument("--lock", default="logs/submit_queue.lock",
@@ -109,6 +109,7 @@ def main():
                                         "", "", f"{path.stat().st_size} bytes"])
             continue
         print(f"{datetime.now():%H:%M:%S} submitting {path.name} ({len(todo) - 1} more queued)", flush=True)
+        sent_at = time.time()  # the server counts its cooldown from the START of a submission
         try:
             status, score, prev, msg, wait = submit(path, key)
         except OSError as exc:  # unreadable file etc.: log it, keep the submitter alive
@@ -119,7 +120,7 @@ def main():
             continue
         with log.open("a", newline="") as f:
             csv.writer(f).writerow([datetime.now().isoformat(timespec="seconds"), str(path), status, score, prev, msg])
-        next_slot = time.time() + a.cooldown
+        next_slot = sent_at + a.cooldown  # not from the answer (scoring takes ~2 min); early tries get a 'wait N s'
 
 
 if __name__ == "__main__":
