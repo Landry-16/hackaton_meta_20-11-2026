@@ -50,6 +50,10 @@ def parse():
     p.add_argument("--external", default=None, help="npz of unlabeled external images (prepare_external.py) used as "
                    "retain anchor instead of mixup/cutmix of forget images")
     p.add_argument("--holdout", type=int, default=1000, help="last N external images: not trained on, used for drift")
+    p.add_argument("--forget-teacher", default=None,
+                   help="checkpoint used as teacher on the forget images only: target = softmax(forget_scale * M(x) / T),"
+                        " no cap / other-tau / class-mix; the anchor term still distills the original model")
+    p.add_argument("--forget-scale", type=float, default=1.0, help="logit scale applied to --forget-teacher")
     p.add_argument("--init", default=None, help="start the student from this checkpoint (e.g. an LFSSD output); "
                    "the teacher stays the original model")
     p.add_argument("--seed", type=int, default=0)
@@ -71,7 +75,9 @@ def main():
     torch.manual_seed(a.seed)
     caps_tag = f"cr{a.conf_min}-{a.conf_max}" if a.conf_min is not None else f"tc{a.target_conf}"
     caps_tag += ("_capcount" if a.cap_by == "count" else "") + ("_logcap" if a.cap_spacing == "log" else "") + (f"_cm{a.class_mix}" if a.class_mix else "")
-    tag = f"{caps_tag}_tau{a.tau}" + (f"_ot{a.other_tau}" if a.other_tau != 1.0 else "") + f"_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_ep{a.epochs}_cf{a.clean_frac}" + (("_ext" if Path(a.external).stem == "external_images" else f"_ext-{Path(a.external).stem}") if a.external else "") + (f"_init-{Path(a.init).stem}" if a.init else "") + (f"_s{a.seed}" if a.seed else "")
+    tag = f"{caps_tag}_tau{a.tau}" + (f"_ot{a.other_tau}" if a.other_tau != 1.0 else "") + f"_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_ep{a.epochs}_cf{a.clean_frac}" + (("_ext" if Path(a.external).stem == "external_images" else f"_ext-{Path(a.external).stem}") if a.external else "") + (f"_init-{Path(a.init).stem}" if a.init else "")
+    tag += f"_ft-{Path(a.forget_teacher).stem}_fs{a.forget_scale}" if a.forget_teacher else ""
+    tag += f"_s{a.seed}" if a.seed else ""
     out = Path(a.out + "_" + tag)
     out.parent.mkdir(parents=True, exist_ok=True)
     reserve(f"{out}_e{ep}.pt" for ep in range(1, a.epochs + 1) if ep % a.save_every == 0 or ep == a.epochs)
@@ -85,6 +91,12 @@ def main():
     for p in teacher.parameters():
         p.requires_grad = False
     student = load_model(Path(a.init) if a.init else MODEL_FILE)
+    fteacher = None
+    if a.forget_teacher:
+        fteacher = load_model(Path(a.forget_teacher)).eval()
+        for p in fteacher.parameters():
+            p.requires_grad = False
+        print(f"forget teacher {a.forget_teacher} x {a.forget_scale} (forget targets only)")
     params = trainable(student, a.train_blocks)
     anchor = [p.detach().clone() for p in params]
     print(f"{tag}: {len(imgs)} images, {sum(p.numel() for p in params) / 1e6:.1f}M trainable params, device {DEVICE}")
@@ -129,11 +141,18 @@ def main():
             else:
                 xr = proxy_retain(augment(x))
             with torch.no_grad(), torch.autocast(**amp):
-                zf, zr = teacher(torch.cat([xf, xr])).float().split([len(xf), len(xr)])  # one call, same outputs
+                if fteacher is None:
+                    zf, zr = teacher(torch.cat([xf, xr])).float().split([len(xf), len(xr)])  # one call, same outputs
+                else:
+                    zf, zr = fteacher(xf).float(), teacher(xr).float()
             with torch.autocast(**amp):
                 sf, sr = student(torch.cat([xf, xr])).float().split([len(xf), len(xr)])
-            target = soft_target(zf, caps[idx].to(zf.device) if caps is not None else a.target_conf, a.tau, a.other_tau)
-            if class_avg is not None:
+            if fteacher is not None:
+                target = F.softmax(a.forget_scale * zf / T, 1)
+            else:
+                target = soft_target(zf, caps[idx].to(zf.device) if caps is not None else a.target_conf, a.tau,
+                                     a.other_tau)
+            if fteacher is None and class_avg is not None:
                 target = mix_class_target(target, zf, class_avg[pseudo[idx]], a.class_mix)
             lf = F.kl_div(F.log_softmax(sf / T, 1), target, reduction="batchmean")
             lr_ = F.kl_div(F.log_softmax(sr / T, 1), F.softmax(zr / T, 1), reduction="batchmean")
