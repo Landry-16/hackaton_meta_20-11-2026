@@ -18,7 +18,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from rect_search import METHODS, folds_of, load_cache
-from seg_train import loss_fn, official
+from seg_train import loss_fn, official, retry
 from wmloc.data import LocalisationDataset
 
 OUT = Path("output")
@@ -144,6 +144,8 @@ def main():
     ap.add_argument("--synth", type=int, default=0, help="synthetic samples per method per epoch")
     ap.add_argument("--synth-set", default="synthv2")
     ap.add_argument("--no-real", action="store_true", help="train on synthetic samples only (transfer gate), judge on ALL real images")
+    ap.add_argument("--plots", action="store_true", help="write the PNG plots (off by default: inode quota)")
+    ap.add_argument("--tag", default="", help="appended to the run name")
     ap.add_argument("--no-flip", action="store_true", help="no flip augmentation or TTA (StegaStamp decoding dies under flips)")
     ap.add_argument("--save-methods", default=",".join(METHODS), help="with --fold all: methods whose test probabilities to write")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -170,6 +172,8 @@ def main():
             ex = np.stack([onehot] * len(z["kinds"])); ex[:, -1] = z["acc"] if "acc" in z else np.where(z["kinds"] == "full", 0.97, 0.53)
             synth[m] = (z["images"], z["masks128"], ex)
         name += f"_{a.synth_set}{a.synth}"
+    if a.tag:
+        name += "_" + a.tag
     steps = a.epochs * ((len(tr) + a.synth * len(synth) + a.batch - 1) // a.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=steps, pct_start=0.1)
     history, t0 = [], time.time()
@@ -205,17 +209,17 @@ def main():
                   " ".join(f"{m} {v[0]:.3f} (A {v[1]:.3f} B {v[2]:.3f})" for m, v in rows.items()) + f" | {time.time() - t0:.0f} s", flush=True)
         else:
             print(f"epoch {epoch}/{a.epochs} loss {np.mean(losses):.4f} | {time.time() - t0:.0f} s", flush=True)
-    OUT.mkdir(exist_ok=True)
-    torch.save(model.state_dict(), OUT / f"segreal_{name}.pt")
+    retry(lambda: torch.save(model.state_dict(), OUT / f"segreal_{name}.pt"))
     if a.fold != "all":
-        plots(name, history, images[ev], masks[ev], probs, methods[ev], full[ev])
-        np.savez(OUT / f"oof_real_{name}{'_noflip' if a.no_flip else ''}.npz", names=np.array(_names)[ev], probs=probs.astype(np.float16))
+        retry(lambda: np.savez(OUT / f"oof_real_{name}{'_noflip' if a.no_flip else ''}.npz", names=np.array(_names)[ev], probs=probs.astype(np.float16)))
+        if a.plots:
+            plots(name, history, images[ev], masks[ev], probs, methods[ev], full[ev])
         return
     t_img, _, t_methods, t_extra, _, t_names = load_split("test")
     probs = predict(model, t_img, t_extra, a.device, tta=not a.no_flip).astype(np.float16)
     for m in a.save_methods.split(","):
         s = t_methods == m
-        np.savez(OUT / f"seg_probs_{m}_test.npz", names=np.array(t_names)[s], probs=probs[s])
+        retry(lambda: np.savez(OUT / f"seg_probs_{m}_test.npz", names=np.array(t_names)[s], probs=probs[s]))
     print("wrote seg_probs_<method>_test.npz for", a.save_methods, flush=True)
 
 

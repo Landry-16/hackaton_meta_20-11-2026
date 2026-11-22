@@ -17,7 +17,7 @@ import torch.nn.functional as F
 
 from rect_search import folds_of
 from seg_real import load_synth, batch_x, load_split, plots, report
-from seg_train import loss_fn
+from seg_train import loss_fn, retry
 from wmloc.data import LocalisationDataset
 
 OUT = Path("output")
@@ -77,7 +77,7 @@ class ExtSegmenter(nn.Module):
     msg: message-aware. `extra` then also carries the message signs (B x (1 + nbits)); a FROZEN copy of the extractor
     gives its per-position bit logits (8 x 8), and their agreement with the known message becomes three input planes
     (local agreement, its image mean, PixelSeal detection channel): where the decoder locally reads the right bits."""
-    def __init__(self, method, wm, extra=1, scales=(1,), msg=False):
+    def __init__(self, method, wm, extra=1, scales=(1,), msg=False, head="small"):
         super().__init__()
         self.method, self.msg = method, msg
         self.sizes = [int(RES[method] * s) for s in scales]
@@ -88,9 +88,13 @@ class ExtSegmenter(nn.Module):
             for q in list(self.frozen.parameters()) + list(self.bit_head.parameters()):
                 q.requires_grad_(False)
         self.lat = nn.ModuleList(nn.Conv2d(c, 64, 1) for _ in self.sizes for c in self.trunk.channels)
-        self.head = nn.Sequential(nn.Conv2d(64 * 4 * len(self.sizes) + extra + (3 if msg else 0), 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(inplace=True),
-                                  nn.Conv2d(128, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
-                                  nn.Conv2d(64, 1, 1))
+        cin = 64 * 4 * len(self.sizes) + extra + (3 if msg else 0)
+        block = lambda a, b: [nn.Conv2d(a, b, 3, padding=1), nn.BatchNorm2d(b), nn.ReLU(inplace=True)]
+        widths = [128, 64] if head == "small" else [256, 256, 128, 128, 64]      # big: more capacity against underfitting
+        layers, prev = [], cin
+        for w in widths:
+            layers += block(prev, w); prev = w
+        self.head = nn.Sequential(*layers, nn.Conv2d(prev, 1, 1))
 
     def train(self, mode=True):
         super().train(mode)
@@ -186,6 +190,10 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--synth", type=int, default=0, help="synthetic samples added per epoch (from output/<synth-set>_<method>.npz)")
     ap.add_argument("--synth-set", default="synth", help="synth (v1) or synthv2")
+    ap.add_argument("--head", default="small", choices=["small", "big"])
+    ap.add_argument("--trunk-div", type=float, default=10, help="trunk learning rate = lr / this")
+    ap.add_argument("--tag", default="", help="appended to the run name (distinguishes hyper-parameter variants)")
+    ap.add_argument("--plots", action="store_true", help="write the two PNG plots (off by default: inode quota)")
     ap.add_argument("--msg", action="store_true", help="message-aware: agreement planes from a frozen extractor copy")
     ap.add_argument("--no-real", action="store_true", help="train on synthetic samples only (transfer gate), judge on ALL real images")
     ap.add_argument("--scales", default="1", help="e.g. 1,2: the trunk also sees the image at twice its working resolution")
@@ -211,12 +219,12 @@ def main():
     print(f"{name}: train {len(tr)} real images, judged on {len(ev)}", flush=True)
 
     wm = load_watermark(a.method, device="cpu") if a.method != "stegastamp" else None
-    model = ExtSegmenter(a.method, wm, scales=tuple(float(v) for v in a.scales.split(",")), msg=a.msg).to(a.device)
+    model = ExtSegmenter(a.method, wm, scales=tuple(float(v) for v in a.scales.split(",")), msg=a.msg, head=a.head).to(a.device)
     trunk = list(model.trunk.parameters())
     rest = [p for n, p in model.named_parameters() if not n.startswith("trunk.") and p.requires_grad]
-    opt = torch.optim.AdamW([{"params": trunk, "lr": a.lr / 10}, {"params": rest, "lr": a.lr}], weight_decay=1e-4)
+    opt = torch.optim.AdamW([{"params": trunk, "lr": a.lr / a.trunk_div}, {"params": rest, "lr": a.lr}], weight_decay=1e-4)
     steps = a.epochs * ((len(tr) + a.synth + a.copypaste + a.batch - 1) // a.batch)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=[a.lr / 10, a.lr], total_steps=steps, pct_start=0.1)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=[a.lr / a.trunk_div, a.lr], total_steps=steps, pct_start=0.1)
     if a.synth:
         z = load_synth(a.synth_set, a.method)
         s_img, s_mask = z["images"], z["masks128"]
@@ -232,6 +240,8 @@ def main():
         name += "_msg"
     if a.scales != "1":
         name += "_ms" + a.scales.replace(",", "-").replace(".", "p")
+    if a.tag:
+        name += "_" + a.tag
     history, t0, probs = [], time.time(), None
     resume, first = OUT / f"resume_{name}.pt", 1                   # a job killed to give its GPU back restarts where it was
     if resume.exists():
@@ -277,25 +287,26 @@ def main():
             print(f"epoch {epoch}/{a.epochs} loss {np.mean(losses):.4f} held-out {overall:.4f} (type A {v[1]:.3f}, type B {v[2]:.3f}) | {time.time() - t0:.0f} s", flush=True)
         else:
             print(f"epoch {epoch}/{a.epochs} loss {np.mean(losses):.4f} | {time.time() - t0:.0f} s", flush=True)
-        if epoch < a.epochs:
-            tmp = resume.with_suffix(".tmp")
-            torch.save({"epoch": epoch, "model": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(), "history": history}, tmp)
-            tmp.rename(resume)
-    OUT.mkdir(exist_ok=True)
-    torch.save(model.state_dict(), OUT / f"seg{name}.pt")
-    resume.unlink(missing_ok=True)
+        if epoch < a.epochs and (epoch % 3 == 0 or not resume.exists()):
+            try:                                                   # in place: no new inode once the file exists
+                torch.save({"epoch": epoch, "model": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(), "history": history}, resume)
+            except (OSError, RuntimeError) as e:
+                print(f"resume not saved ({type(e).__name__}), training goes on", flush=True)
+    resume.unlink(missing_ok=True)                                # frees an inode for the files below
+    retry(lambda: torch.save(model.state_dict(), OUT / f"seg{name}.pt"))
     if a.fold != "all":
-        plots(name, [(h[0], h[1], {m: h[2].get(m, (np.nan,) * 3) for m in ("pixelseal", "trustmark", "stegastamp")}) for h in history],
-              images[ev], masks[ev], probs, methods[ev], full[ev])
-        np.savez(OUT / f"oof_{name}.npz", names=np.array(names)[ev], probs=probs.astype(np.float16))   # for post-processing CV
+        retry(lambda: np.savez(OUT / f"oof_{name}.npz", names=np.array(names)[ev], probs=probs.astype(np.float16)))   # for post-processing CV
+        if a.plots:
+            plots(name, [(h[0], h[1], {m: h[2].get(m, (np.nan,) * 3) for m in ("pixelseal", "trustmark", "stegastamp")}) for h in history],
+                  images[ev], masks[ev], probs, methods[ev], full[ev])
         return
     t_img, _, t_methods, t_extra, _, t_names = load_split("test")
     s = t_methods == a.method
     t_e = t_extra[s][:, -1:]
     if a.msg:
         t_e = np.concatenate([t_e, message_signs("test", [n for n, k in zip(t_names, s) if k])], 1)
-    np.savez(OUT / f"seg_probs_{a.method}_test.npz", names=np.array(t_names)[s],
-             probs=predict(model, t_img[s], t_e, a.device).astype(np.float16))
+    t_probs = predict(model, t_img[s], t_e, a.device).astype(np.float16)
+    retry(lambda: np.savez(OUT / f"seg_probs_{a.method}_test.npz", names=np.array(t_names)[s], probs=t_probs))
     print("wrote", OUT / f"seg_probs_{a.method}_test.npz", flush=True)
 
 
