@@ -2,13 +2,15 @@
 
 One iteration = read results, decide, submit if earned, refill the GPUs, log. Runs until the stop condition.
 
-## Compute (22 Nov 06:30)
-The team node is the reservation job `hold` (jrc0233): GPUs 2-3 for the watermark queue (3 slots each), GPUs 0-1
-borrowed while the teammates leave them idle. Nodes OUTSIDE the reservation are allowed without limit (Michel,
-06:25), but the reservation is MAGNETIC and attracts our jobs: three of the six extra nodes of 03:43 to 06:23 were
-reserved ones and had to be cancelled. Rule: `sbatch --exclude=<reservation node list>` (see `jureca/hold_general.sh`),
-and `~/start_nodeN.sh <jobid>` cancels the job at once if it lands on a reserved node, otherwise starts a queue with
-one job per GPU. Heavy steps without GPU (ranker, post-processing) run on the laptop.
+## Compute (22 Nov 07:40)
+Team node: reservation job `hold` 15905583 on jrc0329 (GPUs 2-3 watermark queue with 2 slots each, GPUs 0-1 borrowed
+while the teammates leave them idle). Three general-queue nodes outside the reservation (jrc0220, jrc0379, jrc0413,
+checked not reserved, one job per GPU), allowed by the organizers (Michel, 06:25: unreserved nodes are not limited).
+The reservation is MAGNETIC and attracts our jobs: always `sbatch --exclude=<reservation node list>`, and
+`~/start_nodeN.sh <jobid>` cancels a job that lands on a reserved node. `~/recover.sh` rebuilds all of this after an
+outage. 07:05:27 to 07:35: every job of savarimuthu1 was killed and the account refused by Slurm ("Invalid account
+or account/partition combination"), a technical issue on the organizers' side. Login nodes: jrlogin03 has /p/scratch,
+jrlogin01 and jrlogin12 did not. Heavy steps without GPU (ranker, post-processing) run on the laptop.
 
 ## Stop
 - public score at or above 0.72 (top 5 level on 22 Nov, 01:00), or
@@ -44,13 +46,18 @@ one job per GPU. Heavy steps without GPU (ranker, post-processing) run on the la
    row without advancing, start one independent reviewer agent (Fable, read-only, no GPU, no submission) with the
    log below and the per-type scores; its ranked proposals become the next candidates. Reset the counter.
 
-## Current best (nested CV, 22 Nov 07:00, submission v14 = public 0.7711)
+## Current best (nested CV, 22 Nov 07:40, submission v15 = public 0.7746)
 | Method | Model | OOF source | CV raw | CV post |
 |---|---|---|---|---|
-| PixelSeal | extractor head, trunk at scales 1 and 2, real + 2000 synth v3+v3b per epoch | `synthv3,synthv3b2000_ms1-2_long` | 0.6758 | 0.7011 |
-| TrustMark | mean of four heads (`ms` and `l4k` flip-averaged, `ms4k`, `l8k`) | `blend4` | 0.6721 | 0.7421 |
-| StegaStamp | ImageNet ResNet-34, real + 3000 synth v5 per method per epoch | `real_synthv5,synthv5b3000` | 0.8176 | 0.8345 |
-| Overall | | | 0.7218 | 0.7593 |
+| PixelSeal | extractor head, trunk at scales 1 and 2, real + 2000 synth v3+v3b per epoch | `synthv3,synthv3b2000_ms1-2_long` | 0.6758 | 0.7005 |
+| TrustMark | mean of four heads (`ms` and `l4k` flip-averaged, `ms4k`, `l8k`) | `blend4` | 0.6721 | 0.7403 |
+| StegaStamp | ImageNet ResNet-34 trained on StegaStamp alone, 6000 synth v5 per epoch (3 fold models) | `real_sohyb` (folds 0, 3, 4 `onlyst`, folds 1, 2 the 3000 multi-method model) | 0.8400 | 0.8530 |
+| Overall | | | 0.7293 | 0.7646 |
+v15 is a deviation from rule 1, written down as such: the single-method StegaStamp model had 3 of its 5 folds when
+the cluster account stopped working (07:05 to 07:35). On those 102 images it gains +0.0373 +- 0.0096 over the 3000
+model (3.9 SE); the nested CV above is conservative (2 folds still use the old model); the test prediction was made on
+the laptop (MPS, 99.9 % mask agreement with the cluster on held-out images) from the 3 available fold models. Folds 1,
+2 and the all-images model are running again; the 5-fold decision will be redone with them.
 How to build and submit now (login nodes have no /p/scratch since 06:35, compute nodes have no internet):
 1. everything on scratch goes through the team node: `jureca/node.sh '<commands>'`, `jureca/q.sh` (queue),
    `rsync --rsync-path="$NODE_RSYNC"` after `source jureca/node.sh`;
@@ -60,14 +67,11 @@ How to build and submit now (login nodes have no /p/scratch since 06:35, compute
 3. the file is copied to `~/sub/` on the login node and sent with `python3 ~/submit_login.py ~/sub/submission_vN.pt`
    (`jureca/submit_login.py`, key from `HACK_API_KEY`).
 
-## Candidates queued or running (07:05)
-- `onlyst`: ImageNet model trained on StegaStamp alone, 6000 v5 samples per epoch out of 24,000: folds 0, 3, 4 at
-  0.867, 0.863, 0.869 (the multi-method model at 3000 is at 0.8176 overall). Folds 1, 2 and all running.
-- `onlyst` + pseudo-labels of v14 (`sopl`), `onlyst` at 12,000 per epoch (`so12`), the same single-method model for
-  TrustMark (`tmo`), 5 folds each.
-- PixelSeal: `ms4k` (scales 1,2 and 4000 per epoch) and scales 1,2 + pseudo-labels of v13, 5 folds, slow.
-- Adopted at equal volume, superseded by `onlyst`: StegaStamp pseudo-labels of v13 at 1000 per method
-  (+0.0128 +- 0.0048 against 1000 without them).
+## Candidates queued or running (07:45)
+- `onlyst` folds 1, 2, all (StegaStamp alone, 6000 per epoch); `sopl` = `onlyst` + pseudo-labels of v14; `so12` =
+  `onlyst` at 12,000 per epoch; 24,000 more StegaStamp v5 samples being generated (sets v5e to v5h).
+- `tmo` / `pso`: the same single-method ImageNet model for TrustMark and for PixelSeal, 5 folds.
+- PixelSeal `ms4k` (scales 1,2 and 4000 per epoch) and scales 1,2 + pseudo-labels of v13, 5 folds (resumed).
 
 ## Decisions of 05:15 to 05:45 (all on 5 folds, paired)
 | Method | Candidate against | Gain | Decision |
@@ -190,3 +194,4 @@ vs 0.659).
 | 9 | 05:40 | decisions table above | v12 = TrustMark mean of two variants + StegaStamp v5 + type A threshold, submitted | 0.7068 | 0.7311 | 0 |
 | 10 | 06:15 | PixelSeal scales 1,2 (+0.043), StegaStamp v5 at 1000 per method (+0.098) | v13 submitted. Organizers (05:58): any available data may be used, unlabeled test images included: pseudo-label runs queued (`--pseudo output/submission_v13.pt`). Their CV is slightly optimistic (the teacher saw the held-out labels), so the bar is +0.01 and the public score must move the same way | 0.7515 | 0.7628 | 0 |
 | 11 | 07:00 | StegaStamp 3000 per method (+0.0243 +- 0.0072), TrustMark mean of 4 (+0.0073 +- 0.0019) | v14 submitted. 06:23: the 6 extra nodes cancelled at an organizer's request (3 were reserved nodes, the reservation is magnetic); 06:28: 4 general-queue jobs resubmitted with the reserved nodes excluded, the first started at 06:55 on jrc0197 (checked: not reserved). 06:35: login nodes lost /p/scratch, tooling moved to the team node | 0.7593 | 0.7711 | 0 |
+| 12 | 07:40 | StegaStamp single-method model, 3 folds of 5 (+0.0373 +- 0.0096 on 102 images) | v15 submitted with the deviation described under "Current best". 07:05 to 07:35: account outage, all jobs lost; `~/recover.sh` restarted the team node, the queue and 3 unreserved nodes at 07:36 | 0.7646 | 0.7746 | 0 |
