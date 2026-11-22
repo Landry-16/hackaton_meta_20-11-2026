@@ -71,56 +71,75 @@ def main():
     lock.write_text(token)
     print(f"submitter {token} started (queue {queue}, log {log})", flush=True)
 
-    next_slot = 0.0
+    next_slot, sent = 0.0, set()
     while True:
-        if lock.read_text().strip() != token:
-            print(f"{datetime.now():%H:%M:%S} another submitter took the lock, exiting", flush=True)
-            return
-        done = set()
-        with log.open() as f:
-            done = {row["file"] for row in csv.DictReader(f) if row["status"] == "success"
-                    or row["status"].startswith("rejected")}
-        todo = [line.strip() for line in queue.read_text().splitlines()
-                if line.strip() and not line.startswith("#") and line.strip() not in done]
-        if not todo:
-            time.sleep(a.poll)
-            continue
-        path = Path(todo[0])
-        if not path.is_file():
-            print(f"{datetime.now():%H:%M:%S} missing {path}, skipped", flush=True)
-            with log.open("a", newline="") as f:
-                csv.writer(f).writerow([datetime.now().isoformat(timespec="seconds"), str(path), "rejected_missing",
-                                        "", "", "file not found"])
-            continue
-        time.sleep(max(0.0, next_slot - time.time()))
-        if lock.read_text().strip() != token:
-            print(f"{datetime.now():%H:%M:%S} another submitter took the lock, exiting", flush=True)
-            return
-        if not path.is_file():  # removed while we were waiting for the cooldown: skip it, never crash
-            print(f"{datetime.now():%H:%M:%S} {path.name} disappeared before its slot, skipped", flush=True)
-            with log.open("a", newline="") as f:
-                csv.writer(f).writerow([datetime.now().isoformat(timespec="seconds"), str(path), "rejected_missing",
-                                        "", "", "file removed before submission"])
-            continue
-        if path.stat().st_size < a.min_bytes:  # reserved-but-never-written checkpoint (crashed run): never send it
-            print(f"{datetime.now():%H:%M:%S} {path.name} is only {path.stat().st_size} bytes, skipped", flush=True)
-            with log.open("a", newline="") as f:
-                csv.writer(f).writerow([datetime.now().isoformat(timespec="seconds"), str(path), "rejected_small",
-                                        "", "", f"{path.stat().st_size} bytes"])
-            continue
-        print(f"{datetime.now():%H:%M:%S} submitting {path.name} ({len(todo) - 1} more queued)", flush=True)
-        sent_at = time.time()  # the server counts its cooldown from the START of a submission
         try:
-            status, score, prev, msg, wait = submit(path, key)
-        except OSError as exc:  # unreadable file etc.: log it, keep the submitter alive
-            status, score, prev, msg, wait = "rejected_oserror", "", "", str(exc)[:200], 0
-        print(f"  -> {status} score={score} prev_best={prev} {msg}", flush=True)
-        if status in ("cooldown", "network_error"):
-            next_slot = time.time() + wait
-            continue
+            next_slot = step(a, queue, log, lock, token, key, next_slot, sent)
+        except SystemExit:
+            return
+        except OSError as exc:  # full file system (inodes), NFS hiccup...: never die, retry
+            print(f"{datetime.now():%H:%M:%S} file system error, retrying in 30 s: {exc}", flush=True)
+            time.sleep(30)
+
+
+def log_row(log, row):
+    """Append one result row; a failed write must not lose the information that a file was already sent."""
+    try:
         with log.open("a", newline="") as f:
-            csv.writer(f).writerow([datetime.now().isoformat(timespec="seconds"), str(path), status, score, prev, msg])
-        next_slot = sent_at + a.cooldown  # not from the answer (scoring takes ~2 min); early tries get a 'wait N s'
+            csv.writer(f).writerow(row)
+    except OSError as exc:
+        print(f"  (could not write {log}: {exc}; kept in memory)", flush=True)
+
+
+def step(a, queue, log, lock, token, key, next_slot, sent):
+    """One pass of the loop; returns the next slot time. Raises SystemExit when another submitter took the lock.
+    `sent` (in memory) holds every file already submitted, so a CSV write failure can never cause a resubmission."""
+    now = lambda: datetime.now().isoformat(timespec="seconds")
+    if lock.read_text().strip() != token:
+        print(f"{datetime.now():%H:%M:%S} another submitter took the lock, exiting", flush=True)
+        raise SystemExit
+    with log.open() as f:
+        done = {row["file"] for row in csv.DictReader(f) if row["status"] == "success"
+                or row["status"].startswith("rejected")}
+    done |= sent
+    todo = [line.strip() for line in queue.read_text().splitlines()
+            if line.strip() and not line.startswith("#") and line.strip() not in done]
+    if not todo:
+        time.sleep(a.poll)
+        return next_slot
+    path = Path(todo[0])
+    if not path.is_file():
+        print(f"{datetime.now():%H:%M:%S} missing {path}, skipped", flush=True)
+        sent.add(str(path))
+        log_row(log, [now(), str(path), "rejected_missing", "", "", "file not found"])
+        return next_slot
+    time.sleep(max(0.0, next_slot - time.time()))
+    if lock.read_text().strip() != token:
+        print(f"{datetime.now():%H:%M:%S} another submitter took the lock, exiting", flush=True)
+        raise SystemExit
+    if not path.is_file():  # removed while we were waiting for the cooldown: skip it, never crash
+        print(f"{datetime.now():%H:%M:%S} {path.name} disappeared before its slot, skipped", flush=True)
+        sent.add(str(path))
+        log_row(log, [now(), str(path), "rejected_missing", "", "", "file removed before submission"])
+        return next_slot
+    size = path.stat().st_size
+    if size < a.min_bytes:  # reserved-but-never-written checkpoint (crashed run): never send it
+        print(f"{datetime.now():%H:%M:%S} {path.name} is only {size} bytes, skipped", flush=True)
+        sent.add(str(path))
+        log_row(log, [now(), str(path), "rejected_small", "", "", f"{size} bytes"])
+        return next_slot
+    print(f"{datetime.now():%H:%M:%S} submitting {path.name} ({len(todo) - 1} more queued)", flush=True)
+    sent_at = time.time()  # the server counts its cooldown from the START of a submission
+    try:
+        status, score, prev, msg, wait = submit(path, key)
+    except OSError as exc:  # unreadable file etc.: log it, keep the submitter alive
+        status, score, prev, msg, wait = "rejected_oserror", "", "", str(exc)[:200], 0
+    print(f"  -> {status} score={score} prev_best={prev} {msg}", flush=True)
+    if status in ("cooldown", "network_error"):
+        return time.time() + wait
+    sent.add(str(path))
+    log_row(log, [now(), str(path), status, score, prev, msg])
+    return sent_at + a.cooldown  # not from the answer (scoring takes ~2 min); early tries get a 'wait N s'
 
 
 if __name__ == "__main__":
