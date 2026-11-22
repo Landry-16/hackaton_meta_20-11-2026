@@ -234,8 +234,9 @@ def main():
     OUT.mkdir(exist_ok=True)
     tag = "v3" if a.v3 else "v2" if a.v2 else ""
     extra = {"acc": np.array(accs, np.float32)} if accs else {}
-    np.savez(OUT / f"synth{tag}{a.suffix}_{a.method}{'_quick' if a.calibrate else ''}.npz",
-             images=np.stack(images), masks128=np.stack(masks), kinds=np.array(kinds), **extra)
+    from seg_train import retry                                  # the shared inode quota may refuse the write for a while
+    retry(lambda: np.savez(OUT / f"synth{tag}{a.suffix}_{a.method}{'_quick' if a.calibrate else ''}.npz",
+                           images=np.stack(images), masks128=np.stack(masks), kinds=np.array(kinds), **extra))
     if accs:
         k = np.array(kinds)
         print("measured full-image decode:", {t: round(float(np.mean(np.array(accs)[k == t])), 3) for t in ("full", "rect", "object")})
