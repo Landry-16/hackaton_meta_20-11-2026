@@ -64,3 +64,4 @@ trunk (+0.009, noise), StegaStamp extractor head, coarse rectangle search, bigge
 |---|---|---|---|---|---|---|
 | 0 | 02:10 | StegaStamp v3 5 folds (0.679 vs 0.642) | adopted, v8 submitted | 0.6691 | 0.6681 | 0 |
 | 1 | 02:15 | nothing yet (v3x folds at epoch 20/60, PixelSeal test rectangles 20/81) | queue rebuilt: 3 jobs per GPU on 2-3, idle 0-1 borrowed; message-aware heads coded | 0.6691 | 0.6681 | 0 |
+| 2 | 02:38 | nothing yet (v3x folds 0-1 at epoch 42-53/60, PixelSeal test rectangles 50/81) | borrowed-GPU jobs were preempted after 23 min and lost: training now resumes from its last epoch; message bits of synth v3 recovered; 10 message-aware folds queued (`synthv3,synthv3b600_msg`) | 0.6691 | 0.6681 | 0 |
