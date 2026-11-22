@@ -90,6 +90,18 @@ class ExtractorTrunk(nn.Module):
         return feats
 
 
+def jnd_heatmap(jnd, x):
+    """Same map as the kit's JND.heatmaps (single-channel luminance version), written without boolean-mask indexing:
+    that indexing made a training step twice as slow. x: B x 3 x H x W in [0, 1] -> B x 1 x H x W."""
+    lum = 255 * (0.299 * x[:, 0:1] + 0.587 * x[:, 1:2] + 0.114 * x[:, 2:3])
+    la = F.conv2d(lum, jnd.conv_lum.weight[:1], padding=2) / 32
+    la = torch.where(la <= 127, 17 * (1 - torch.sqrt(la.clamp_min(0) / 127 + 1e-5)), 3 / 128 * (la - 127) + 3)
+    gx, gy = F.conv2d(lum, jnd.conv_x.weight[:1], padding=1), F.conv2d(lum, jnd.conv_y.weight[:1], padding=1)
+    cm = torch.sqrt(gx ** 2 + gy ** 2)
+    cm = 0.117 * 16 * cm ** 2.4 / (cm ** 2 + 26 ** 2)
+    return torch.clamp_min(la + cm - 0.3 * torch.minimum(la, cm), 0) / 255
+
+
 class ExtSegmenter(nn.Module):
     """scales: input sizes as multiples of the extractor resolution, e.g. (1,) or (1, 2).
     msg: message-aware. `extra` then also carries the message signs (B x (1 + nbits)); a FROZEN copy of the extractor
@@ -152,7 +164,7 @@ class ExtSegmenter(nn.Module):
         planes = [extra[:, :1, None, None].expand(-1, -1, 128, 128)]
         if self.jnd is not None:
             with torch.no_grad(), torch.autocast(device_type=x.device.type, enabled=False):
-                planes.append(F.avg_pool2d(self.jnd.heatmaps(x.float())[:, :1], 4) * 20)
+                planes.append(F.avg_pool2d(jnd_heatmap(self.jnd, x.float()), 4) * 20)
         return self.head(torch.cat([u.float() for u in ups] + planes, 1))[:, 0]
 
 
