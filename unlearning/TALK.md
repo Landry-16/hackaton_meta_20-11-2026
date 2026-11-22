@@ -24,7 +24,7 @@ generated images (text-to-image plus model inversion), and tuned the anchor weig
 forgetting.
 
 We tested one change per submission, fitted a small model of the score from our own results (it predicted our
-0.4762 exactly), and finished with a weight average of several seeds: 0.479 public, up from 0.14."
+0.4762 exactly), and finished with a weight average of several seeds: 0.480 public, up from 0.14."
 
 ## Likely questions
 - **Why not just maximise the error on the forget set?** The score compares us with retrained models; over-forgetting
