@@ -300,6 +300,10 @@ def main():
                         want = want + a.aug_shift * (~keep).float()
                     want = want.clamp(0.02, 60.0)
                     zw = a.wrong_scale * (zo_f if a.shape_orig else zm)
+                    if len(fteacher) > 1 and not a.mix_scales and not a.shape_orig:
+                        # several teachers = an ensemble like the gold average: mix their (sharpened) PROBABILITIES,
+                        # not their logits (a logit mean is a product of experts: sharper, consensus-only)
+                        zw = T * torch.log(F.softmax(a.wrong_scale * zf / T, -1).mean(0) + 1e-12)
                     if a.mix_scales:
                         sc = torch.tensor(a.mix_scales, device=zf.device)[:, None, None]
                         zw = T * torch.log(F.softmax(sc * zf / T, -1).mean(0) + 1e-12)
