@@ -22,9 +22,10 @@ from wmloc.data import LocalisationDataset
 from wmloc.utils import miou_image
 
 OUT = Path("output")
-GRID = {"thr": [0.3, 0.4, 0.5, 0.6], "lcc": [False, True], "snap": [0.8, 0.9, 1.01], "floor": [0.0, 0.03, 0.08],
-        "refine": [0.8, 0.9, 2.0],           # 2.0 = never use the refined rectangle
-        "rect": [True, False]}               # use the decoded rectangle of rect_search or not
+GRID = {"thr": [0.4, 0.5, 0.6], "lcc": [False, True], "snap": [0.8, 1.01], "floor": [0.03],
+        "refine": [0.8, 2.0],                # accept the exhaustive-search rectangle above this bit accuracy; 2.0 = never
+        "rect": [False]}                     # old coarse rect_search override, superseded by global_rect.py
+RAW_GRID = {"thr": [0.5], "lcc": [False], "snap": [1.01], "floor": [0.0], "refine": [0.8, 2.0], "rect": [False]}
 
 
 def oof_probs(method, source):
@@ -39,10 +40,10 @@ def oof_probs(method, source):
 
 
 def post(p, typeb, rect_box, prm, refined=None):
-    if rect_box is not None and prm.get("rect", True):
-        return box_mask(rect_box)
     if refined is not None and refined[0] >= prm.get("refine", 2.0):
         return box_mask(refined[1])
+    if rect_box is not None and prm.get("rect", True):
+        return box_mask(rect_box)
     m = (p >= prm["thr"]).astype(np.uint8)
     if typeb and prm["lcc"] and m.any():
         lab, n = ndimage.label(m)
@@ -70,11 +71,10 @@ def context(split):
     for n, m, fa, ba, box in zip(cache["names"].tolist(), cache["methods"], cache["full_acc"], cache["best_acc"], cache["boxes"]):
         c = int(choose(np.array([fa]), np.array([ba]), *params[m])[0])
         info[n] = (fa < params[m][0], tuple(box) if c == 1 else None, None)  # (type B?, decoded rectangle, refined)
-    f = OUT / f"refine_{split}.npz"
-    if f.exists() and len(GRID["refine"]) > 1:                                                        # rect_refine.py: (best accuracy, box)
+    for f in sorted(OUT.glob(f"grect_{split}_*.npz")):                      # global_rect.py: best box and its bit accuracy
         z = np.load(f)
         for n, acc, box in zip(z["names"].tolist(), z["best_acc"], z["boxes"]):
-            if n in info:
+            if n in info and len(GRID["refine"]) > 1:
                 info[n] = (info[n][0], info[n][1], (float(acc), tuple(int(v) for v in box)))
     return info
 
@@ -93,7 +93,7 @@ def main():
     ap.add_argument("--no-refine", action="store_true", help="ignore rect_refine boxes (e.g. not computed on test yet)")
     a = ap.parse_args()
     if a.no_refine:
-        GRID["refine"] = [2.0]
+        GRID["refine"] = RAW_GRID["refine"] = [2.0]
     sources = dict(kv.split("=") for kv in a.source.split(","))
     ds = LocalisationDataset("release", "train")
     gts = {m["image_name"]: ds.m128[m["image_name"]] for m in ds.meta}
@@ -108,23 +108,21 @@ def main():
             print(f"{method}: no OOF files yet"); continue
         full = np.array([bool(meta[n]["full_watermark"]) for n in names])
         fold = folds_of(np.array([method] * len(names)), full)
+        grid = RAW_GRID if method in a.raw_methods.split(",") else GRID          # raw: only the rectangle rule is tuned
         held_scores, base_scores = np.zeros(len(names)), score_set(names, probs, gts, info, base_prm, use_rect=False)
         for k in range(5):
             tr, te = fold != k, fold == k
             if not te.any():
                 continue
-            best = max((dict(zip(GRID, v)) for v in itertools.product(*GRID.values())),
+            best = max((dict(zip(grid, v)) for v in itertools.product(*grid.values())),
                        key=lambda prm: score_set([n for n, t in zip(names, tr) if t], probs, gts, info, prm).mean())
             held_scores[te] = score_set([n for n, t in zip(names, te) if t], probs, gts, info, best)
-        chosen[method] = max((dict(zip(GRID, v)) for v in itertools.product(*GRID.values())),
+        chosen[method] = max((dict(zip(grid, v)) for v in itertools.product(*grid.values())),
                              key=lambda prm: score_set(names, probs, gts, info, prm).mean())
         d = held_scores - base_scores
         rows.append((method, len(names), base_scores.mean(), held_scores.mean(), d.mean(), d.std() / np.sqrt(len(d))))
         print(f"{method:10s} n={len(names)} raw {base_scores.mean():.4f} -> post-processed (nested CV) {held_scores.mean():.4f} "
               f"(paired gain {d.mean():+.4f} +- {d.std() / np.sqrt(len(d)):.4f}) | chosen {chosen[method]}", flush=True)
-    for m in filter(None, a.raw_methods.split(",")):
-        chosen[m] = dict(base_prm, refine=2.0, rect=False)
-        print(f"{m}: kept raw (nested CV showed no gain from tuning)")
     if rows:
         print(f"overall raw {np.mean([r[2] for r in rows]):.4f} -> post {np.mean([r[3] for r in rows]):.4f}")
         (OUT / "post_params.json").write_text(json.dumps(chosen))
