@@ -191,3 +191,14 @@ Infra: outputs reserved at start (inode quota), submitter skips files < 100 MB, 
 35-epoch run ~4 min. Server cooldown 10 min.
 Open: Caltech-256 retain anchor (Philibert, waiting for his go). Final file = best public (r7b_capcount01_s1.4.pt)
 unless something beats it; which submission counts for the final ranking is still unconfirmed by the organizers.
+
+## Rounds 10-16 (22 Nov, 04:30)
+Best public **0.3949** = forget-teacher distillation (round 13b): `unlearn_distill.py --forget-teacher <7b raw> --init <7b raw>
+--forget-scale 1.6 --clean-frac 0.0 --external external_images.npz --lr 1e-4 --epochs 35`, submitted raw (no head scale):
+clean loss 4.71 (2.89), aug 5.07 (3.18), ext KL 0.063 (7b raw at head 1.40: ~4.8 (2.5), ext KL ~0.2, public 0.3888).
+- The class gradation is real (+0.005 to +0.008 at equal forgetting: 8a uniform 0.3805 vs 6b 0.388; 7a 0.3851 vs 0.3801).
+- Caltech-256 anchor = Imagenette (10a 0.3888 = 7b). Stronger anchor (--alpha 2) or 2 blocks forget less (not comparable).
+- 7b recipe with 100 epochs (12b): clean 4.78 (2.16), ext KL 0.070; the lower drift of long runs comes from the epochs.
+- Forget-teacher family (M = 7b raw, lr 1e-4): more epochs and more anchor weight lower the ext KL (0.049-0.068);
+  the scale sets loss level and spread. Scales 1.4 / 1.8 / 2.0 and seeds 1-3 (for a same-setting soup) being scored.
+- Submitter now counts its cooldown from the start of a submission (one slot per 10 min).
