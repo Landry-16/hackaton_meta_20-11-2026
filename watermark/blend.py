@@ -33,7 +33,9 @@ def main():
     if a.sources:                                               # any OOF source postproc.py knows (seg_ext or real_...)
         from postproc import oof_probs
         parts = [oof_probs(a.method, src) for src in a.sources.split(";")]
-        names = sorted(set.intersection(*(set(d) for d in parts)))
+        from wmloc.data import LocalisationDataset
+        own = {m["image_name"] for m in LocalisationDataset("release", "train").meta if m["method"] == a.method}
+        names = sorted(set.intersection(own, *(set(d) for d in parts)))          # real_ sources hold the 3 methods
         assert len(names) == 170, f"{len(names)} images are covered by all the variants, 170 expected"
         probs = np.stack([np.mean([d[n] for d in parts], 0) for n in names]).astype(np.float16)
         for k in range(1, 5):
