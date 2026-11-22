@@ -16,7 +16,7 @@ import torch
 import torch.nn.functional as F
 
 from task_template import DEVICE, MODEL_FILE, load_forget_images, load_model, preprocess
-from ulib import (T, augment, class_wrong_dist, difficulty_caps, fmt, kl_t, logits_views, mix_class_target,
+from ulib import (T, augment, class_wrong_dist, count_caps, difficulty_caps, fmt, kl_t, logits_views, mix_class_target,
                   proxy_report, proxy_retain, soft_target)
 
 
@@ -25,6 +25,9 @@ def parse():
     p.add_argument("--target-conf", type=float, default=0.5, help="cap on the target top-class prob (at T=2)")
     p.add_argument("--conf-min", type=float, default=None, help="per-image caps: hardest image gets conf-min ...")
     p.add_argument("--conf-max", type=float, default=None, help="... easiest gets conf-max (overrides --target-conf)")
+    p.add_argument("--cap-by", choices=["rank", "count"], default="rank",
+                   help="per-image caps from difficulty rank (default) or one cap per pseudo-class from its number of "
+                        "forget images (--conf-min for the fullest classes, --conf-max for the smallest, geometric)")
     p.add_argument("--cap-spacing", choices=["linear", "log"], default="linear",
                    help="per-image caps spread linearly (default) or geometrically between conf-min and conf-max")
     p.add_argument("--class-mix", type=float, default=0.0,
@@ -67,7 +70,7 @@ def main():
     a = parse()
     torch.manual_seed(a.seed)
     caps_tag = f"cr{a.conf_min}-{a.conf_max}" if a.conf_min is not None else f"tc{a.target_conf}"
-    caps_tag += ("_logcap" if a.cap_spacing == "log" else "") + (f"_cm{a.class_mix}" if a.class_mix else "")
+    caps_tag += ("_capcount" if a.cap_by == "count" else "") + ("_logcap" if a.cap_spacing == "log" else "") + (f"_cm{a.class_mix}" if a.class_mix else "")
     tag = f"{caps_tag}_tau{a.tau}" + (f"_ot{a.other_tau}" if a.other_tau != 1.0 else "") + f"_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_ep{a.epochs}_cf{a.clean_frac}" + ("_ext" if a.external else "") + (f"_init-{Path(a.init).stem}" if a.init else "") + (f"_s{a.seed}" if a.seed else "")
     out = Path(a.out + "_" + tag)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -84,12 +87,17 @@ def main():
     print(f"{tag}: {len(imgs)} images, {sum(p.numel() for p in params) / 1e6:.1f}M trainable params, device {DEVICE}")
 
     caps = None
-    if a.conf_min is not None:
+    clean_all = None
+    if a.cap_by == "count" or a.class_mix:
+        clean_all = logits_views(teacher, imgs, views=("clean",))["clean"]
+    if a.conf_min is not None and a.cap_by == "count":
+        caps = count_caps(clean_all, a.conf_min, a.conf_max)
+    elif a.conf_min is not None:
         caps = difficulty_caps(teacher, imgs, a.conf_min, a.conf_max, spacing=a.cap_spacing)
         print(f"per-image caps: min {caps.min():.3f} median {caps.median():.3f} max {caps.max():.3f}")
     pseudo = class_avg = None
     if a.class_mix:
-        pseudo, class_avg = class_wrong_dist(logits_views(teacher, imgs, views=("clean",))["clean"])
+        pseudo, class_avg = class_wrong_dist(clean_all)
         print(f"class-mix {a.class_mix}: class averages over {int((torch.bincount(pseudo) > 0).sum())} classes")
     ev = imgs[: a.eval_n]
     orig_views = logits_views(teacher, ev)

@@ -100,6 +100,20 @@ def _difficulty_caps(model, images_u8, conf_min, conf_max, views, bs, seed, spac
 
 
 @torch.no_grad()
+def count_caps(clean_logits: torch.Tensor, conf_min: float, conf_max: float) -> torch.Tensor:
+    """One cap per pseudo-class (original's clean argmax), from how many forget images the class has:
+    u_c = (n_max - n_c) / (n_max - n_min); cap = conf_min * (conf_max / conf_min) ** u_c.
+    The fullest classes (likely emptied completely) get conf_min, the smallest get conf_max."""
+    y = clean_logits.argmax(1)
+    counts = torch.bincount(y, minlength=clean_logits.shape[1]).float()
+    n = counts[y]
+    present = counts[counts > 0]
+    span = max(float(present.max() - present.min()), 1.0)
+    u = (present.max() - n) / span
+    return conf_min * (conf_max / conf_min) ** u
+
+
+@torch.no_grad()
 def class_wrong_dist(clean_logits: torch.Tensor) -> tuple:
     """Per pseudo-class average of the original's NON-top distribution (softmax at T, top class removed, renormalised),
     computed on the clean forget images. Returns (pseudo_labels [N], class_avg [C, C]); class_avg[c, c] = 0."""
