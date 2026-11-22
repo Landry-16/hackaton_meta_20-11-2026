@@ -46,18 +46,15 @@ jrlogin01 and jrlogin12 did not. Heavy steps without GPU (ranker, post-processin
    row without advancing, start one independent reviewer agent (Fable, read-only, no GPU, no submission) with the
    log below and the per-type scores; its ranked proposals become the next candidates. Reset the counter.
 
-## Current best (nested CV, 22 Nov 07:40, submission v15 = public 0.7746)
+## Current best (nested CV, 22 Nov 08:35, submission v17 = public 0.7843)
 | Method | Model | OOF source | CV raw | CV post |
 |---|---|---|---|---|
-| PixelSeal | extractor head, trunk at scales 1 and 2, real + 2000 synth v3+v3b per epoch | `synthv3,synthv3b2000_ms1-2_long` | 0.6758 | 0.7005 |
-| TrustMark | mean of four heads (`ms` and `l4k` flip-averaged, `ms4k`, `l8k`) | `blend4` | 0.6721 | 0.7403 |
-| StegaStamp | ImageNet ResNet-34 trained on StegaStamp alone, 6000 synth v5 per epoch (3 fold models) | `real_sohyb` (folds 0, 3, 4 `onlyst`, folds 1, 2 the 3000 multi-method model) | 0.8400 | 0.8530 |
-| Overall | | | 0.7293 | 0.7646 |
-v15 is a deviation from rule 1, written down as such: the single-method StegaStamp model had 3 of its 5 folds when
-the cluster account stopped working (07:05 to 07:35). On those 102 images it gains +0.0373 +- 0.0096 over the 3000
-model (3.9 SE); the nested CV above is conservative (2 folds still use the old model); the test prediction was made on
-the laptop (MPS, 99.9 % mask agreement with the cluster on held-out images) from the 3 available fold models. Folds 1,
-2 and the all-images model are running again; the 5-fold decision will be redone with them.
+| PixelSeal | extractor head, trunk at scales 1 and 2, real + 2000 synth v3+v3b per epoch | `synthv3,synthv3b2000_ms1-2_long` | 0.6758 | 0.7001 |
+| TrustMark | mean of `blend4` (four extractor heads) and the ImageNet model trained on TrustMark alone (12,000 v5 per epoch, fast mode) | `blend4_tm12` | 0.6996 | 0.7589 |
+| StegaStamp | mean of two ImageNet models trained on StegaStamp alone (6000 and 12,000 v5 per epoch), 6 models each | `so_blend` | 0.8659 | 0.8800 |
+| Overall | | | 0.7471 | 0.7797 |
+Test probabilities of the single-method ImageNet models are computed on the laptop (`ens_predict.py --real-tag ...
+--device mps`, 35 s per variant) after pulling the checkpoints; extractor heads need the cluster queue.
 How to build and submit now (login nodes have no /p/scratch since 06:35, compute nodes have no internet):
 1. everything on scratch goes through the team node: `jureca/node.sh '<commands>'`, `jureca/q.sh` (queue),
    `rsync --rsync-path="$NODE_RSYNC"` after `source jureca/node.sh`;
@@ -67,11 +64,18 @@ How to build and submit now (login nodes have no /p/scratch since 06:35, compute
 3. the file is copied to `~/sub/` on the login node and sent with `python3 ~/submit_login.py ~/sub/submission_vN.pt`
    (`jureca/submit_login.py`, key from `HACK_API_KEY`).
 
-## Candidates queued or running (07:45)
-- `onlyst` folds 1, 2, all (StegaStamp alone, 6000 per epoch); `sopl` = `onlyst` + pseudo-labels of v14; `so12` =
-  `onlyst` at 12,000 per epoch; 24,000 more StegaStamp v5 samples being generated (sets v5e to v5h).
-- `tmo` / `pso`: the same single-method ImageNet model for TrustMark and for PixelSeal, 5 folds.
-- PixelSeal `ms4k` (scales 1,2 and 4000 per epoch) and scales 1,2 + pseudo-labels of v13, 5 folds (resumed).
+## Candidates queued or running (08:40)
+- `dil` (Nathan's idea): last trunk stage dilated, deep features on a grid twice as fine, on top of scales 1,2.
+  PixelSeal against `synthv3,synthv3b2000_ms1-2_long` (0.6758), TrustMark against `..4000_ms1-2_l4k` (0.6620).
+- PixelSeal `ms4k` (5 folds + all, finishing); then PixelSeal means: `ps3` = mean(ms, ms flip-averaged, l4k) already
+  passes (+0.0054 +- 0.0027), test probabilities queued.
+- `so24`: StegaStamp alone, 24,000 per epoch out of 48,000 (fast mode). TrustMark v5e to v5h being generated for the
+  same.
+- Fast mode (`seg_real.py --fast --batch 32 --lr 6e-4`): float16 + channels-last + batch 32, 3 times faster in wall
+  clock, same score on 5 folds (0.8587 against 0.8531).
+Closed today: pseudo-labels on the single-method StegaStamp model (-0.003); single-method ImageNet model for
+PixelSeal (0.46 to 0.55); PixelSeal pseudo-labels with scales 1,2 (stopped for GPUs); "real holes are smoother"
+(they have 21 % less detail than their surroundings, tattooed rectangles 29 % more: it is the watermark itself).
 
 ## Decisions of 05:15 to 05:45 (all on 5 folds, paired)
 | Method | Candidate against | Gain | Decision |
@@ -195,3 +199,5 @@ vs 0.659).
 | 10 | 06:15 | PixelSeal scales 1,2 (+0.043), StegaStamp v5 at 1000 per method (+0.098) | v13 submitted. Organizers (05:58): any available data may be used, unlabeled test images included: pseudo-label runs queued (`--pseudo output/submission_v13.pt`). Their CV is slightly optimistic (the teacher saw the held-out labels), so the bar is +0.01 and the public score must move the same way | 0.7515 | 0.7628 | 0 |
 | 11 | 07:00 | StegaStamp 3000 per method (+0.0243 +- 0.0072), TrustMark mean of 4 (+0.0073 +- 0.0019) | v14 submitted. 06:23: the 6 extra nodes cancelled at an organizer's request (3 were reserved nodes, the reservation is magnetic); 06:28: 4 general-queue jobs resubmitted with the reserved nodes excluded, the first started at 06:55 on jrc0197 (checked: not reserved). 06:35: login nodes lost /p/scratch, tooling moved to the team node | 0.7593 | 0.7711 | 0 |
 | 12 | 07:40 | StegaStamp single-method model, 3 folds of 5 (+0.0373 +- 0.0096 on 102 images) | v15 submitted with the deviation described under "Current best". 07:05 to 07:35: account outage, all jobs lost; `~/recover.sh` restarted the team node, the queue and 3 unreserved nodes at 07:36 | 0.7646 | 0.7746 | 0 |
+| 13 | 08:20 | single-method StegaStamp on 5 folds (+0.0355 +- 0.0073 against 3000), mean with its 12,000 variant (+0.0128 +- 0.0033) | v16 submitted | 0.7729 | 0.7771 | 0 |
+| 14 | 08:35 | TrustMark: `blend4` + single-method ImageNet model at 12,000 (+0.0275 +- 0.0072) | v17 submitted. Speed: `bench_speed.py`, fast mode adopted for the ImageNet models | 0.7797 | 0.7843 | 0 |
