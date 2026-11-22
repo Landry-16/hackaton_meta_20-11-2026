@@ -157,6 +157,8 @@ def main():
     ap.add_argument("--tag", default="", help="appended to the run name")
     ap.add_argument("--no-flip", action="store_true", help="no flip augmentation or TTA (StegaStamp decoding dies under flips)")
     ap.add_argument("--save-methods", default=",".join(METHODS), help="with --fold all: methods whose test probabilities to write")
+    ap.add_argument("--only", default="", help="train on ONE method (its real images, its synthetic set, its pseudo-labels): "
+                    "3 times faster at equal volume; the other methods are still scored but mean nothing")
     ap.add_argument("--pseudo", default="", help="a submission file (output/submission_vN.pt): its masks become the labels of "
                     "the 1020 test images, added to every epoch (allowed by the organizers, 22 Nov 05:58)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -170,6 +172,8 @@ def main():
     ev = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold == int(a.fold))
     if a.no_real:
         tr, ev = np.array([], int), np.arange(len(images))
+    if a.only:
+        tr = tr[methods[tr] == a.only]
     name = f"fold{a.fold}" + ("_synthonly" if a.no_real else "")
     print(f"{name}: train {len(tr)} real images, judged on {len(ev)}", flush=True)
 
@@ -178,6 +182,8 @@ def main():
     synth = {}
     if a.synth:
         for k, m in enumerate(METHODS):
+            if a.only and m != a.only:
+                continue
             z = load_synth(a.synth_set, m)
             onehot = np.zeros(len(METHODS) + 1, np.float32); onehot[k] = 1
             ex = np.stack([onehot] * len(z["kinds"])); ex[:, -1] = z["acc"] if "acc" in z else np.where(z["kinds"] == "full", 0.97, 0.53)
@@ -185,9 +191,11 @@ def main():
         name += f"_{a.synth_set}{a.synth}"
     per_epoch = {m: a.synth for m in synth}
     if a.pseudo:
-        synth["pseudo"] = pseudo_set(a.pseudo)
+        synth["pseudo"] = pseudo_set(a.pseudo, a.only or None)
         per_epoch["pseudo"] = len(synth["pseudo"][0])
         print(f"+ {per_epoch['pseudo']} test images with the masks of {a.pseudo}", flush=True)
+    if a.only:
+        name += "_only" + a.only[:2]
     if a.tag:
         name += "_" + a.tag
     steps = a.epochs * ((len(tr) + sum(per_epoch.values()) + a.batch - 1) // a.batch)
