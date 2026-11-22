@@ -7,7 +7,10 @@
 #     lead job, so it drains within one job length.
 #   start (lead, from the login node, in the repo clone):
 #     setsid nohup srun --jobid=<hold id> --overlap --ntasks=1 bash jureca/gpu_queue.sh > /dev/null 2>&1 < /dev/null &
-#   GPUs the queue may use: $TEAM_DIR/queue/gpus (default "0 1 2 3"). Submit with jureca/gpu_submit.sh.
+#   GPUs the queue may use: $TEAM_DIR/queue/gpus (default "0 1 2 3"), or GPU_LIST. Submit with jureca/gpu_submit.sh.
+# Borrow mode (BORROW_FROM=<other queue dir>): this instance uses GPUs that belong to another queue only while that
+# queue leaves them idle, and gives them back at once: as soon as a job waits there or runs on the card, its own
+# jobs on that card are killed and put back in pending. Two instances may share one queue folder (mv is the lock).
 Q="${QUEUE_DIR:-${TEAM_DIR:?set TEAM_DIR}/queue}"     # QUEUE_DIR: a second queue (the lead runs his own on his GPUs)
 LEAD="${QUEUE_LEAD:-savarimuthu1}"
 SLOTS="${SLOTS:-3}"
@@ -18,6 +21,19 @@ export HF_HUB_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-5}"
 declare -A PID JOB OWN GPU_OF          # keyed by slot id "gpu.slot"
 echo "$(date +%H:%M:%S) queue daemon on $(hostname), $SLOTS lead jobs per GPU"
+
+preempt() {   # $1 = slot: kill the job and requeue it
+  pkill -TERM -P "${PID[$1]}" 2>/dev/null; kill "${PID[$1]}" 2>/dev/null; wait "${PID[$1]}" 2>/dev/null
+  rm -f "$Q/running/${JOB[$1]}.log"; mv "$Q/running/${JOB[$1]}.job" "$Q/pending/" 2>/dev/null
+  echo "$(date +%H:%M:%S) gave GPU ${GPU_OF[$1]} back, requeued ${JOB[$1]}"
+  unset "PID[$1]" "JOB[$1]" "OWN[$1]" "GPU_OF[$1]"
+}
+
+owner_on() {  # $1 = gpu: does the owning queue run a job on it
+  local l
+  for l in "$BORROW_FROM"/running/*.log; do [ -e "$l" ] && head -1 "$l" | grep -q "GPU $1," && return 0; done
+  return 1
+}
 
 mem_used() { nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i "$1" 2>/dev/null | tr -d ' ' | grep -E '^[0-9]+$' || echo 0; }
 
@@ -38,7 +54,7 @@ start() {   # $1 = job file, $2 = gpu, $3 = owner
 }
 
 while true; do
-  gpus=$(cat "$Q/gpus" 2>/dev/null); gpus=${gpus:-0 1 2 3}
+  gpus=${GPU_LIST:-$(cat "$Q/gpus" 2>/dev/null)}; gpus=${gpus:-0 1 2 3}
   for slot in "${!PID[@]}"; do                                   # reap finished jobs
     kill -0 "${PID[$slot]}" 2>/dev/null && continue
     wait "${PID[$slot]}"; rc=$?
@@ -49,6 +65,15 @@ while true; do
   done
   declare -A n=() foreign=()
   for g in $gpus; do n[$g]=0; foreign[$g]=0; done
+  if [ -n "${BORROW_FROM:-}" ]; then                             # give borrowed GPUs back when their owner needs them
+    owner_waits=0; ls "$BORROW_FROM"/pending/*.job > /dev/null 2>&1 && owner_waits=1
+    for g in $gpus; do
+      if [ "$owner_waits" = 1 ] || owner_on "$g"; then
+        foreign[$g]=1
+        for slot in "${!PID[@]}"; do [ "${GPU_OF[$slot]}" = "$g" ] && preempt "$slot"; done
+      fi
+    done
+  fi
   for slot in "${!PID[@]}"; do
     g=${GPU_OF[$slot]}; n[$g]=$(( ${n[$g]:-0} + 1 )); [ "${OWN[$slot]}" != "$LEAD" ] && foreign[$g]=1
   done
