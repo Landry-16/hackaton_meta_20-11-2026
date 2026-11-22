@@ -45,12 +45,11 @@ One iteration = read results, decide, submit if earned, refill the GPUs, log. Ru
 | Overall | | | | 0.6691 |
 
 ## Candidates queued or running
-- `msg`: message-aware heads (idea 1), 5 folds each (OOF source `synthv3,synthv3b600_msg`); partial result so far
-  PixelSeal +0.005 +- 0.007 on 2 folds, TrustMark +0.002 +- 0.006 on 4 folds.
-- `fit`: the training loss stays high (0.6 to 0.7): the models underfit the synthetic data. Screening on the
-  synth-only gate (all 170 real images judged, no real image trained on): 5 times more synthetic samples per epoch
-  (3000, batch 16), with and without a doubled learning rate; StegaStamp with 1500 per method. A winner is then
-  confirmed on 5 folds before adoption.
+- `fit2`: the training loss stays high (0.6 to 0.7): the models underfit. Screening on the synth-only gate (all
+  170 real images judged, none trained on), 3000 synth v3+v3b samples per epoch, 40 epochs, batch 16: tags `long`
+  (nothing else changed), `trunk3` (trunk lr / 3), `big` (5-layer head), `bigtrunk3`; StegaStamp `lr1e3`.
+  A winner is confirmed on 5 folds before adoption.
+- Reviewer agent (Fable, read-only) started at 03:50 on the stall: underfitting causes, holes, undecodable rectangles.
 
 ## Where the points are lost (v9, post-processed OOF, share of the overall score lost)
 | Method | A holes (85) | B object (~41) | B rectangle (~44) |
@@ -73,7 +72,8 @@ Biggest items: holes of PixelSeal and TrustMark, then the rectangles that do not
 Decoder-as-judge occlusion, keep-window decoding, re-embed correlation, TrustMark remover diff, WAM detector
 fine-tune, real-watermark copy-paste, blend of extractor and ImageNet models, more synth v2 volume, multi-scale
 trunk (+0.009, noise), StegaStamp extractor head, coarse rectangle search, bigger post-processing grids,
-synth v3 + v3b instead of v2 for PixelSeal / TrustMark (-0.002 and +0.004, noise), synthetic recipe v4 with COCO
+synth v3 + v3b instead of v2 for PixelSeal / TrustMark (-0.002 and +0.004, noise), message-aware heads on a
+frozen extractor copy (-0.002 +- 0.005 and +0.003 +- 0.005), synthetic recipe v4 with COCO
 carriers and foreign content (synth-only gate: PixelSeal 0.577 vs 0.609, TrustMark 0.567 vs 0.591, StegaStamp 0.479
 vs 0.659).
 
@@ -85,3 +85,4 @@ vs 0.659).
 | 2 | 02:38 | nothing yet (v3x folds 0-1 at epoch 42-53/60, PixelSeal test rectangles 50/81) | borrowed-GPU jobs were preempted after 23 min and lost: training now resumes from its last epoch; message bits of synth v3 recovered; 10 message-aware folds queued (`synthv3,synthv3b600_msg`) | 0.6691 | 0.6681 | 0 |
 | 3 | 03:00 | PixelSeal test rectangles (26 % of type B accepted) | applied (gain +0.020 +- 0.008 measured on train), v9 submitted; inode quota hit at 02:43 killed 15 jobs at start, requeued, watcher added; recipe v4 coded, generation queued | 0.6691 | 0.6743 | 0 |
 | 4 | 03:30 | v3x 5 folds (PixelSeal -0.002 +- 0.006, TrustMark +0.004 +- 0.005); v4 gate (worse on the 3 methods) | both rejected; all queues were pinned to ONE CPU core since the start: restarted with 64 cores, 6 times faster, GPUs at 95-100 %; underfitting screening queued | 0.6691 | 0.6743 | 1 |
+| 5 | 03:50 | message-aware heads, 5 folds (PixelSeal -0.002 +- 0.005, TrustMark +0.003 +- 0.005) | rejected; second 4 x A100 node from the general queue (allowed, outside the one-node limit); writes made robust to the inode quota; 9 underfitting screens running | 0.6691 | 0.6743 | 2: reviewer agent started, counter reset to 0 |
