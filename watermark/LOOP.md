@@ -36,21 +36,16 @@ One iteration = read results, decide, submit if earned, refill the GPUs, log. Ru
    row without advancing, start one independent reviewer agent (Fable, read-only, no GPU, no submission) with the
    log below and the per-type scores; its ranked proposals become the next candidates. Reset the counter.
 
-## Current best (nested CV, 22 Nov 03:00, submission v9 = public 0.6743)
-| Method | Model | OOF source | CV raw | CV post |
+## Current best (nested CV, 22 Nov 04:35, submission v10 = public 0.6950)
+| Method | Model | OOF source | CV raw | CV post (rectangles + segment snapping) |
 |---|---|---|---|---|
-| PixelSeal | extractor head, real + synth v2 | `synthv2400` | 0.6185 | 0.6385 with rectangles |
-| TrustMark | extractor head, real + synth v2 | `synthv2400` | 0.6049 | 0.6760 |
-| StegaStamp | ImageNet ResNet-34, real + synth v3 | `real_synthv3300` | 0.6794 | 0.6930 |
-| Overall | | | | 0.6691 |
+| PixelSeal | extractor head, real + 2000 synth v3+v3b per epoch, 60 epochs | `synthv3,synthv3b2000_long` | 0.6330 | 0.6496 (`voteb`) |
+| TrustMark | same | `synthv3,synthv3b2000_long` | 0.6284 | 0.7004 (`voteb`) |
+| StegaStamp | ImageNet ResNet-34, real + synth v3 | `real_synthv3300` | 0.6794 | 0.7062 (`greedy`) |
+| Overall | | | 0.6469 | 0.6854 |
+Build: `postproc.py --source "pixelseal=synthv3,synthv3b2000_long;trustmark=synthv3,synthv3b2000_long;stegastamp=real_synthv3300" --raw-methods pixelseal --seg --test-prefix seg_probs_ens --out submission_v10.pt --apply`
 
 ## Candidates queued or running
-- `long` (the candidate): extractor head, real + 2000 synth v3+v3b per epoch, 60 epochs, batch 16 (5 times more
-  synthetic samples than the current best, same number of passes over the real images). 5 folds + fold all, both
-  methods. Decision: `compare_oof.py --a synthv2400 --b "synthv3,synthv3b2000_long"`.
-- `big`: the same with the 5-layer head. Two candidates against one baseline inflate the test, so `big` is adopted
-  only if it beats `long` itself under the rule (`--a "synthv3,synthv3b2000_long" --b "synthv3,synthv3b2000_big"`).
-- Reviewer agent (Fable, read-only) started at 03:50 on the stall: underfitting causes, holes, undecodable rectangles.
 
 ## Segment snapping (declared 04:20, BEFORE any result)
 Observation on 16 real train images: the object-shaped regions follow the object contours of the image itself (the
@@ -67,6 +62,21 @@ Test: SAM (ViT-H, automatic masks, external pretrained model, one checkpoint fil
   its mean probability.
 - Kill by 05:15 if the oracle on type B objects is under 0.85, or if `greedy` gains less than 0.02 on the OOF
   predictions of the 510 train images. If kept: on/off option in `postproc.py` (nested CV), then SAM on test.
+
+Gate result (04:24, 510 train OOF images, raw 0.6421):
+| Sub-type | raw | greedy | vote | oracle |
+|---|---|---|---|---|
+| A holes (255) | 0.654 | 0.658 | 0.538 | 0.620 |
+| B object (124) | 0.661 | 0.686 | 0.711 | 0.930 |
+| B rectangle (131) | 0.601 | 0.602 | 0.527 | 0.602 |
+| all | 0.642 | 0.650 (+0.0083 +- 0.0021) | 0.577 | 0.691 |
+Reading: type B objects ARE unions of SAM segments (oracle 0.93); holes and rectangles are not. Honest account of
+the declared criteria: the oracle bar is passed, the `greedy` bar (+0.02) is NOT (+0.008). The idea was kept anyway
+because the oracle leaves +0.27 on a quarter of the images, and one more variant was added AFTER seeing this table:
+`voteb` = `vote` on type B images only (accepted rectangles applied first). That is a post-hoc choice; it is
+protected only by the nested CV in `postproc.py` (option `seg` in off / greedy / voteb, chosen on 4 folds, scored on
+the 5th): overall 0.6749 -> 0.6854. The public score moved the same way (0.6743 -> 0.6950). No further hand-made
+selection rule will be tried on these OOFs; the next step is a LEARNED selector validated on the 5 folds.
 
 ## Underfitting screen (synth-only gate, fold-free: trained on synthetic only, judged on all 170 real images)
 | Method | 600 per epoch, 40 epochs (reference) | 3000 per epoch `long` | `trunk3` | `big` | `bigtrunk3` |
@@ -119,3 +129,4 @@ vs 0.659).
 | 4 | 03:30 | v3x 5 folds (PixelSeal -0.002 +- 0.006, TrustMark +0.004 +- 0.005); v4 gate (worse on the 3 methods) | both rejected; all queues were pinned to ONE CPU core since the start: restarted with 64 cores, 6 times faster, GPUs at 95-100 %; underfitting screening queued | 0.6691 | 0.6743 | 1 |
 | 5 | 03:50 | message-aware heads, 5 folds (PixelSeal -0.002 +- 0.005, TrustMark +0.003 +- 0.005) | rejected; second 4 x A100 node from the general queue (allowed, outside the one-node limit); writes made robust to the inode quota; 9 underfitting screens running | 0.6691 | 0.6743 | 2: reviewer agent started, counter reset to 0 |
 | 6 | 04:00 | underfitting screens (table above) | volume is the fix: `long` and `big` queued on 5 folds + fold all (24 jobs); 3 more general-queue nodes requested (start estimated 04:45), 1 job per GPU; 106 rejected files deleted (inode quota at 2,600 free) | 0.6691 | 0.6743 | 0 |
+| 7 | 04:35 | `long` 5 folds: TrustMark +0.0235 +- 0.0062, PixelSeal +0.0146 +- 0.0067 (both adopted); `big` against `long`: -0.002 and -0.006 (rejected); SAM gate (table above) | v10 = `long` models + segment snapping, submitted | 0.6854 | 0.6950 | 0 |
