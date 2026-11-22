@@ -233,7 +233,14 @@ def main():
     if a.scales != "1":
         name += "_ms" + a.scales.replace(",", "-").replace(".", "p")
     history, t0, probs = [], time.time(), None
-    for epoch in range(1, a.epochs + 1):
+    resume, first = OUT / f"resume_{name}.pt", 1                   # a job killed to give its GPU back restarts where it was
+    if resume.exists():
+        ck = torch.load(resume, map_location=a.device, weights_only=False)
+        model.load_state_dict(ck["model"]); opt.load_state_dict(ck["opt"]); sched.load_state_dict(ck["sched"])
+        history, first = ck["history"], ck["epoch"] + 1
+        rng = np.random.default_rng(1000 + first)
+        print(f"resumed after epoch {ck['epoch']}", flush=True)
+    for epoch in range(first, a.epochs + 1):
         model.train()
         order = [("real", i) for i in rng.permutation(tr)]
         if a.synth:
@@ -270,8 +277,13 @@ def main():
             print(f"epoch {epoch}/{a.epochs} loss {np.mean(losses):.4f} held-out {overall:.4f} (type A {v[1]:.3f}, type B {v[2]:.3f}) | {time.time() - t0:.0f} s", flush=True)
         else:
             print(f"epoch {epoch}/{a.epochs} loss {np.mean(losses):.4f} | {time.time() - t0:.0f} s", flush=True)
+        if epoch < a.epochs:
+            tmp = resume.with_suffix(".tmp")
+            torch.save({"epoch": epoch, "model": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(), "history": history}, tmp)
+            tmp.rename(resume)
     OUT.mkdir(exist_ok=True)
     torch.save(model.state_dict(), OUT / f"seg{name}.pt")
+    resume.unlink(missing_ok=True)
     if a.fold != "all":
         plots(name, [(h[0], h[1], {m: h[2].get(m, (np.nan,) * 3) for m in ("pixelseal", "trustmark", "stegastamp")}) for h in history],
               images[ev], masks[ev], probs, methods[ev], full[ev])
