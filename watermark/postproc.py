@@ -24,8 +24,20 @@ from wmloc.utils import miou_image
 OUT = Path("output")
 GRID = {"thr": [0.4, 0.5, 0.6], "lcc": [False, True], "snap": [0.8, 1.01], "floor": [0.03],
         "refine": [0.8, 2.0],                # accept the exhaustive-search rectangle above this bit accuracy; 2.0 = never
-        "rect": [False]}                     # old coarse rect_search override, superseded by global_rect.py
-RAW_GRID = {"thr": [0.5], "lcc": [False], "snap": [1.01], "floor": [0.0], "refine": [0.8, 2.0], "rect": [False]}
+        "rect": [False],                     # old coarse rect_search override, superseded by global_rect.py
+        "seg": ["off", "greedy", "voteb"]}   # snap onto SAM object segments (sam_snap.py); voteb = vote, type B only
+RAW_GRID = {"thr": [0.5], "lcc": [False], "snap": [1.01], "floor": [0.0], "refine": [0.8, 2.0], "rect": [False],
+            "seg": ["off", "greedy", "voteb"]}
+SEGS, _SEG_CACHE = {}, {}                    # image name -> K x 128 x 128 segments; (name, rule, thr) -> snapped mask
+
+
+def snapped(name, p, typeb, rule, thr):
+    key = (name, rule, thr)
+    if key not in _SEG_CACHE:
+        from sam_snap import greedy, vote
+        start = (p >= thr).astype(np.uint8)
+        _SEG_CACHE[key] = greedy(p, SEGS[name], start=start) if rule == "greedy" else vote(p, SEGS[name]) if typeb else start
+    return _SEG_CACHE[key].copy()
 
 
 def oof_probs(method, source):
@@ -39,12 +51,14 @@ def oof_probs(method, source):
     return probs
 
 
-def post(p, typeb, rect_box, prm, refined=None):
+def post(p, typeb, rect_box, prm, refined=None, name=None):
     if refined is not None and refined[0] >= prm.get("refine", 2.0):
         return box_mask(refined[1])
     if rect_box is not None and prm.get("rect", True):
         return box_mask(rect_box)
     m = (p >= prm["thr"]).astype(np.uint8)
+    if prm.get("seg", "off") != "off" and name in SEGS:
+        m = snapped(name, p, typeb, prm["seg"], prm["thr"])
     if typeb and prm["lcc"] and m.any():
         lab, n = ndimage.label(m)
         if n > 1:
@@ -80,7 +94,7 @@ def context(split):
 
 
 def score_set(names, probs, gts, info, prm, use_rect=True):
-    return np.array([miou_image(post(probs[n], info[n][0], info[n][1] if use_rect else None, prm, info[n][2] if use_rect else None), gts[n]) for n in names])
+    return np.array([miou_image(post(probs[n], info[n][0], info[n][1] if use_rect else None, prm, info[n][2] if use_rect else None, name=n), gts[n]) for n in names])
 
 
 def main():
@@ -91,7 +105,16 @@ def main():
     ap.add_argument("--out", default="submission_post.pt")
     ap.add_argument("--raw-methods", default="", help="methods kept raw (thr 0.5, no rules) when tuning does not help in nested CV")
     ap.add_argument("--no-refine", action="store_true", help="ignore rect_refine boxes (e.g. not computed on test yet)")
+    ap.add_argument("--seg", action="store_true", help="allow the SAM segment snapping rules (needs output/sam_<split>_*.npz)")
     a = ap.parse_args()
+    if a.seg:
+        from sam_segments import load_segments
+        SEGS.update(load_segments("train"))
+        if a.apply:
+            SEGS.update(load_segments("test"))
+            assert len(SEGS) == 1530, f"segments of {len(SEGS)} images only"
+    else:
+        GRID["seg"] = RAW_GRID["seg"] = ["off"]
     if a.no_refine:
         GRID["refine"] = RAW_GRID["refine"] = [2.0]
     sources = dict(kv.split("=") for kv in a.source.split(";" if ";" in a.source else ","))   # ";" when a source name holds a comma
@@ -135,7 +158,7 @@ def main():
             z = np.load(OUT / f"{a.test_prefix}_{m}_test.npz")
             tprobs.update(dict(zip(z["names"].tolist(), z["probs"].astype(np.float32))))
         names = [m["image_name"] for m in test.meta]
-        masks = np.stack([post(tprobs[n], tinfo[n][0], tinfo[n][1], chosen[test.meta[i]["method"]], tinfo[n][2]) for i, n in enumerate(names)])
+        masks = np.stack([post(tprobs[n], tinfo[n][0], tinfo[n][1], chosen[test.meta[i]["method"]], tinfo[n][2], name=n) for i, n in enumerate(names)])
         assert masks.shape == (1020, 128, 128) and len(set(names)) == 1020
         torch.save({"image_names": names, "masks": torch.from_numpy(masks).bool()}, OUT / a.out)
         print("wrote", OUT / a.out, "| mean predicted watermarked share:", round(float(masks.mean()), 3))
