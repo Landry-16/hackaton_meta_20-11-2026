@@ -36,17 +36,18 @@ One iteration = read results, decide, submit if earned, refill the GPUs, log. Ru
    row without advancing, start one independent reviewer agent (Fable, read-only, no GPU, no submission) with the
    log below and the per-type scores; its ranked proposals become the next candidates. Reset the counter.
 
-## Current best (nested CV, 22 Nov 04:55, submission v11 = public 0.7167)
-| Method | Model | OOF source | CV raw | CV post (rectangles + segments) |
+## Current best (nested CV, 22 Nov 06:15, submission v13 = public 0.7628)
+| Method | Model | OOF source | CV raw | CV post |
 |---|---|---|---|---|
-| PixelSeal | extractor head, real + 2000 synth v3+v3b per epoch, 60 epochs | `synthv3,synthv3b2000_long` | 0.6330 | 0.6642 |
-| TrustMark | same, prediction averaged with the mirrored image | `synthv3,synthv3b2000_long_tta` | 0.6370 | 0.7200 |
-| StegaStamp | ImageNet ResNet-34, real + synth v3 | `real_synthv3300` | 0.6794 | 0.7133 |
-| Overall | | | 0.6498 | 0.6991 |
-Build (login node): `ens_predict.py --tag "synthv3,synthv3b2000_long" --methods trustmark --tta` (GPU), then with
-SRC = `pixelseal=synthv3,synthv3b2000_long;trustmark=synthv3,synthv3b2000_long_tta;stegastamp=real_synthv3300`:
-`seg_rank.py --source "$SRC" --apply` and
-`postproc.py --source "$SRC" --raw-methods pixelseal --seg --test-prefix seg_probs_ens --out submission_v11.pt --apply`
+| PixelSeal | extractor head, trunk at scales 1 and 2, real + 2000 synth v3+v3b per epoch | `synthv3,synthv3b2000_ms1-2_long` | 0.6758 | 0.7005 |
+| TrustMark | mean of two heads (scales 1,2 / 4000 per epoch), flip-averaged | `blend_ms_l4k_tta` | 0.6648 | 0.7371 |
+| StegaStamp | ImageNet ResNet-34, real + 1000 synth v5 per method per epoch | `real_synthv5,synthv5b1000` | 0.7933 | 0.8169 |
+| Overall | | | 0.7113 | 0.7515 |
+Build: test probabilities with `ens_predict.py` (GPU queue; `--out-prefix` + `blend.py --test` for a mean of
+variants), then ON THE LAPTOP (the login node and shared compute nodes are 20 times slower for this step):
+`rsync` the OOF / test probability files into `watermark/output`, `seg_rank.py --source "$SRC" --apply`,
+`postproc.py --source "$SRC" --raw-methods pixelseal --seg --test-prefix seg_probs_ens --out submission_vN.pt --apply`,
+`rsync` the submission back and submit from the cluster.
 
 ## Candidates queued or running (06:00)
 - v13 being built: PixelSeal `synthv3,synthv3b2000_ms1-2_long`, TrustMark `blend_ms_l4k_tta`, StegaStamp
@@ -176,3 +177,4 @@ vs 0.659).
 | 7 | 04:35 | `long` 5 folds: TrustMark +0.0235 +- 0.0062, PixelSeal +0.0146 +- 0.0067 (both adopted); `big` against `long`: -0.002 and -0.006 (rejected); SAM gate (table above) | v10 = `long` models + segment snapping, submitted | 0.6854 | 0.6950 | 0 |
 | 8 | 05:00 | flip averaging on the saved fold models (TrustMark +0.0086 +- 0.0028 adopted, PixelSeal +0.0047 +- 0.0025 kept off); candidate ranker (type B: +0.032 over the best hand rule) | v11 = v10 + TrustMark flip averaging + ranker, submitted; v5 data generated (12,000 per method); 40 jobs queued; 2 more general nodes requested (7 in total) | 0.6991 | 0.7167 | 0 |
 | 9 | 05:40 | decisions table above | v12 = TrustMark mean of two variants + StegaStamp v5 + type A threshold, submitted | 0.7068 | 0.7311 | 0 |
+| 10 | 06:15 | PixelSeal scales 1,2 (+0.043), StegaStamp v5 at 1000 per method (+0.098) | v13 submitted. Organizers (05:58): any available data may be used, unlabeled test images included: pseudo-label runs queued (`--pseudo output/submission_v13.pt`). Their CV is slightly optimistic (the teacher saw the held-out labels), so the bar is +0.01 and the public score must move the same way | 0.7515 | 0.7628 | 0 |
