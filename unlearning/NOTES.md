@@ -240,3 +240,11 @@ Only then mark the idea as rejected; otherwise write 'confounded / error' and re
 5. If a file scores >0.005 below its reference, run `audit_files.py` on it and the reference: a DUPLICATE fingerprint,
    an mtime older than the run's end, or a forget loss far from the log's last `clean: ... loss_mean=` line means the
    file is not the run it is named after (recycled `_free_NN.pt` keeping an old checkpoint after a crash).
+
+## FINAL (22 Nov, 11:41)
+Unlearning final public **0.4828** = `out/soup_p8w_105.pt`: weight average of 4 seeds of the final recipe (forget teacher
+M7b, wrong classes x1.6, class-level loss map 2.37/10.77 with pow 8 and within-std 1.0 on the partial classes, capped
+classes sharpened 3.2, anchor = generated + inverted images at alpha 32, 105 epochs). Last hour: 0.4762 (alpha 32 + 70 ep)
+| 0.4676 (alpha 96: anchor too strong, forget fit lost) | 0.4778 (pow 8) | 0.4790 (4-seed soup) | 0.4800 | 0.4828.
+Score model: retain factor = 1/(1 + 0.62 x holdout drift), public noise about 0.003. Team finals: watermark 0.7991,
+model equality 1.00, unlearning 0.4828.
