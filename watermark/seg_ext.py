@@ -95,7 +95,7 @@ class ExtSegmenter(nn.Module):
     msg: message-aware. `extra` then also carries the message signs (B x (1 + nbits)); a FROZEN copy of the extractor
     gives its per-position bit logits (8 x 8), and their agreement with the known message becomes three input planes
     (local agreement, its image mean, PixelSeal detection channel): where the decoder locally reads the right bits."""
-    def __init__(self, method, wm, extra=1, scales=(1,), msg=False, head="small", dil=False):
+    def __init__(self, method, wm, extra=1, scales=(1,), msg=False, head="small", dil=False, jnd=False):
         super().__init__()
         self.method, self.msg = method, msg
         self.sizes = [int(RES[method] * s) for s in scales]
@@ -106,7 +106,11 @@ class ExtSegmenter(nn.Module):
             for q in list(self.frozen.parameters()) + list(self.bit_head.parameters()):
                 q.requires_grad_(False)
         self.lat = nn.ModuleList(nn.Conv2d(c, 64, 1) for _ in self.sizes for c in self.trunk.channels)
-        cin = 64 * 4 * len(self.sizes) + extra + (3 if msg else 0)
+        # PixelSeal multiplies its residual by a perceptual masking map computed on the image (JND, Pixel Seal paper
+        # eq. 10): strong on edges and dark areas, near zero on bright flat areas. Given as an input plane, it tells the
+        # head where watermark evidence can exist at all.
+        self.jnd = wm.model.attenuation if jnd and method == "pixelseal" else None
+        cin = 64 * 4 * len(self.sizes) + extra + (3 if msg else 0) + (1 if self.jnd is not None else 0)
         block = lambda a, b: [nn.Conv2d(a, b, 3, padding=1), nn.BatchNorm2d(b), nn.ReLU(inplace=True)]
         widths = [128, 64] if head == "small" else [256, 256, 128, 128, 64]      # big: more capacity against underfitting
         layers, prev = [], cin
@@ -145,8 +149,11 @@ class ExtSegmenter(nn.Module):
             for f in self.trunk(xs):
                 ups.append(F.interpolate(self.lat[k](f), size=(128, 128), mode="bilinear", align_corners=False))
                 k += 1
-        planes = extra[:, :1, None, None].expand(-1, -1, 128, 128)
-        return self.head(torch.cat([u.float() for u in ups] + [planes], 1))[:, 0]
+        planes = [extra[:, :1, None, None].expand(-1, -1, 128, 128)]
+        if self.jnd is not None:
+            with torch.no_grad(), torch.autocast(device_type=x.device.type, enabled=False):
+                planes.append(F.avg_pool2d(self.jnd.heatmaps(x.float())[:, :1], 4) * 20)
+        return self.head(torch.cat([u.float() for u in ups] + planes, 1))[:, 0]
 
 
 def message_signs(split, names):
@@ -221,6 +228,7 @@ def main():
     ap.add_argument("--scales", default="1", help="e.g. 1,2: the trunk also sees the image at twice its working resolution")
     ap.add_argument("--copypaste", type=int, default=0, help="real-watermark copy-paste samples per epoch (training fold donors only)")
     ap.add_argument("--dil", action="store_true", help="dilated last trunk stage: deepest features on a grid twice as fine")
+    ap.add_argument("--jnd", action="store_true", help="PixelSeal: the embedder's perceptual masking map as an input plane")
     ap.add_argument("--seed", type=int, default=0, help="another seed = another independent fit to average")
     ap.add_argument("--pseudo", default="", help="a submission file: its masks label the test images of the method, added to every epoch")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -244,7 +252,7 @@ def main():
     print(f"{name}: train {len(tr)} real images, judged on {len(ev)}", flush=True)
 
     wm = load_watermark(a.method, device="cpu") if a.method != "stegastamp" else None
-    model = ExtSegmenter(a.method, wm, scales=tuple(float(v) for v in a.scales.split(",")), msg=a.msg, head=a.head, dil=a.dil).to(a.device)
+    model = ExtSegmenter(a.method, wm, scales=tuple(float(v) for v in a.scales.split(",")), msg=a.msg, head=a.head, dil=a.dil, jnd=a.jnd).to(a.device)
     trunk = list(model.trunk.parameters())
     rest = [p for n, p in model.named_parameters() if not n.startswith("trunk.") and p.requires_grad]
     opt = torch.optim.AdamW([{"params": trunk, "lr": a.lr / a.trunk_div}, {"params": rest, "lr": a.lr}], weight_decay=1e-4)
@@ -272,6 +280,8 @@ def main():
         name += "_ms" + a.scales.replace(",", "-").replace(".", "p")
     if a.dil:
         name += "_dil"
+    if a.jnd:
+        name += "_jnd"
     if a.seed:
         name += f"_s{a.seed}"
     if a.tag:
