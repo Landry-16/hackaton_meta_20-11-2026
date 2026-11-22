@@ -24,9 +24,10 @@ One iteration = read results, decide, submit if earned, refill the GPUs, log. Ru
    ADOPT: update the table below, train `--fold all`, average the 6 models (`ens_predict.py`), then
    `postproc.py --apply`. KEEP: write why in the log.
 3. Submit only under rule 4. Post the score on the board, add a line to the vault note.
-4. Refill: GPUs 2 and 3 take 3 jobs each (`jureca/q.sh <tag> ...`). GPUs 0 and 1 belong to the teammates. One
+4. Refill: GPUs 2 and 3 take 3 jobs each (`jureca/q.sh <tag> ...`). GPUs 0 and 1 belong to the teammates; the
+   borrow instance of the queue runs watermark jobs there only while they are idle and gives them back at once. One
    job per team on the cluster: never `sbatch`. Keep the inode count low: delete checkpoints of rejected variants.
-5. Stall rule: an iteration "advances" when a variant is adopted or the CV estimate rises. After 2 iterations in a
+5. Stall rule (only iterations where a candidate finished count): an iteration "advances" when a variant is adopted or the CV estimate rises. After 2 iterations in a
    row without advancing, start one independent reviewer agent (Fable, read-only, no GPU, no submission) with the
    log below and the per-type scores; its ranked proposals become the next candidates. Reset the counter.
 
@@ -40,7 +41,9 @@ One iteration = read results, decide, submit if earned, refill the GPUs, log. Ru
 
 ## Candidates queued or running
 - `grtps`: exhaustive rectangle search, PixelSeal test (needed to apply the +0.02 measured on train).
-- `v3x`: PixelSeal and TrustMark extractor heads on real + synth v3 + v3b, 600 per epoch, 5 folds each.
+- `v3x`: PixelSeal and TrustMark extractor heads on real + synth v3 + v3b, 600 per epoch, 5 folds each
+  (OOF source `synthv3,synthv3b600`).
+- next: `--msg` (message-aware heads, idea 1) on the same data, once `recover_bits.py` has written the bits.
 
 ## Ideas not tried yet (take from the top)
 1. Message-aware input for the extractor heads: per-position agreement map between decoder logits and the known
@@ -60,3 +63,4 @@ trunk (+0.009, noise), StegaStamp extractor head, coarse rectangle search, bigge
 | Iter | Time | What finished | Decision | CV estimate | Public | Stall count |
 |---|---|---|---|---|---|---|
 | 0 | 02:10 | StegaStamp v3 5 folds (0.679 vs 0.642) | adopted, v8 submitted | 0.6691 | 0.6681 | 0 |
+| 1 | 02:15 | nothing yet (v3x folds at epoch 20/60, PixelSeal test rectangles 20/81) | queue rebuilt: 3 jobs per GPU on 2-3, idle 0-1 borrowed; message-aware heads coded | 0.6691 | 0.6681 | 0 |
