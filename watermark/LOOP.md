@@ -61,7 +61,7 @@ jrlogin01 and jrlogin12 did not. Heavy steps without GPU (ranker, post-processin
    row without advancing, start one independent reviewer agent (Fable, read-only, no GPU, no submission) with the
    log below and the per-type scores; its ranked proposals become the next candidates. Reset the counter.
 
-## Current best: v19 = public 0.7955, nested CV 0.7949 (09:58), SRC pixelseal=ps4;trustmark=b4_tm12x4;stegastamp=soC (table below is v18; v19 changes: StegaStamp `soC` 0.8845 raw / 0.8912 post, TrustMark `b4_tm12x4` 0.7026 / 0.7736)
+## Current best: v20 = public 0.7976, nested CV 0.7950 (11:09), SRC pixelseal=psF;trustmark=b4_tmfam5;stegastamp=soF. Same adopted models as v19, each family averaged over every available seed at test (own seeds + Nathan's fold-all seeds): PixelSeal mean of 4 families (ms seeds 0,1 + 1 fold-all seed; ms flip-averaged; l4k + 2 fold-all seeds; ms4k seeds 0,1), TrustMark blend4 + single-method family (4 x [12,000: 4 seeds + Nathan's 4] + 1 x 24,000), StegaStamp 2/5 x 24,000 (3 seeds) + 3/5 x 12,000 (3 seeds + Nathan's 2). Per method after post-processing: PixelSeal 0.7197, TrustMark 0.7689, StegaStamp 0.8962. (The table below is v18.)
 | Method | Model | OOF source | CV raw | CV post |
 |---|---|---|---|---|
 | PixelSeal | mean of 4 extractor heads: scales 1,2 (plain and flip-averaged), 4000 per epoch, scales 1,2 + 4000 per epoch | `ps4` | 0.6879 | 0.7206 |
@@ -220,3 +220,4 @@ vs 0.659).
 | 14 | 08:35 | TrustMark: `blend4` + single-method ImageNet model at 12,000 (+0.0275 +- 0.0072) | v17 submitted. Speed: `bench_speed.py`, fast mode adopted for the ImageNet models | 0.7797 | 0.7843 | 0 |
 | 15 | 09:26 | PixelSeal scales 1,2 + 4000 (+0.0128 +- 0.0042), mean of 4 PixelSeal heads; TrustMark second seed | v18 submitted. 5 more unreserved nodes at 08:40 (Landry's request, checked not reserved) | 0.7891 | 0.7931 | 0 |
 | 16 | 09:58 | StegaStamp 24,000 per epoch (+0.0183 +- 0.0056), means of seeds | v19 submitted. Rejected on 5 folds: dilated trunk for PixelSeal (-0.0004 +- 0.0038 at 4000) and TrustMark; Nathan's side: TrustMark scales 1,2,3 (-0.0108 +- 0.0057), single-method ImageNet for PixelSeal (0.564). PixelSeal mean + dilated variant: +0.004, under the rule | 0.7949 | 0.7955 | 0 |
+| 17 | 11:09 | PixelSeal JND input plane at 2000 (-0.0018 +- 0.0028 alone, -0.0010 in the mean), JND-weighted ranker features (-0.0047 +- 0.0035), TrustMark 8000 per epoch (-0.0154 +- 0.0048), Nathan's PixelSeal scales 1,2,3 (+0.0064 +- 0.0056 alone, +0.003 in the mean): all rejected | v20 = seed-averaged consolidation of the v19 models, submitted (CV unchanged by design). Timing lesson: PixelSeal at scales 1,2 costs 34 s per epoch at 2000 and 66 s at 4000 on an A100, so a 4000 run is 66 minutes | 0.7950 | 0.7976 | 0 |
