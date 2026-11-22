@@ -25,6 +25,7 @@ def main():
                     "write oof_ext_<method>_fold<k>_<tag>_tta.npz (to judge --tta with compare_oof.py)")
     ap.add_argument("--out-prefix", default="seg_probs_ens", help="output/<prefix>_<method>_test.npz (blend.py averages several)")
     ap.add_argument("--scales", default="1", help="seg_ext models trained with --scales")
+    ap.add_argument("--dil", action="store_true", help="seg_ext models trained with --dil")
     ap.add_argument("--real-tag", default=None, help="seg_real checkpoint suffix (then methods come from seg_real)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
@@ -40,7 +41,7 @@ def main():
             from wmloc.watermarks import load_watermark
             ckpts = sorted(OUT.glob(f"segext_{m}_fold*_{a.tag}.pt"))
             model = ExtSegmenter(m, load_watermark(m, device="cpu") if m != "stegastamp" else None, head=a.head,
-                                 scales=tuple(float(v) for v in a.scales.split(","))).to(a.device)
+                                 scales=tuple(float(v) for v in a.scales.split(",")), dil=a.dil).to(a.device)
             run = lambda: predict_ext(model, t_img[s], t_extra[s][:, -1:], a.device, tta=a.tta)
             if a.oof:
                 from rect_search import folds_of
