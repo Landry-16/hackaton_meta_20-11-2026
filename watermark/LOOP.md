@@ -31,19 +31,20 @@ One iteration = read results, decide, submit if earned, refill the GPUs, log. Ru
    row without advancing, start one independent reviewer agent (Fable, read-only, no GPU, no submission) with the
    log below and the per-type scores; its ranked proposals become the next candidates. Reset the counter.
 
-## Current best (nested CV, 22 Nov 02:10, submission v8 = public 0.6681)
+## Current best (nested CV, 22 Nov 03:00, submission v9 = public 0.6743)
 | Method | Model | OOF source | CV raw | CV post |
 |---|---|---|---|---|
-| PixelSeal | extractor head, real + synth v2 | `synthv2400` | 0.6185 | 0.6385 with rectangles (not on test yet) |
+| PixelSeal | extractor head, real + synth v2 | `synthv2400` | 0.6185 | 0.6385 with rectangles |
 | TrustMark | extractor head, real + synth v2 | `synthv2400` | 0.6049 | 0.6760 |
 | StegaStamp | ImageNet ResNet-34, real + synth v3 | `real_synthv3300` | 0.6794 | 0.6930 |
 | Overall | | | | 0.6691 |
 
 ## Candidates queued or running
-- `grtps`: exhaustive rectangle search, PixelSeal test (needed to apply the +0.02 measured on train).
 - `v3x`: PixelSeal and TrustMark extractor heads on real + synth v3 + v3b, 600 per epoch, 5 folds each
   (OOF source `synthv3,synthv3b600`).
-- next: `--msg` (message-aware heads, idea 1) on the same data, once `recover_bits.py` has written the bits.
+- `msg`: message-aware heads (idea 1) on the same data, 5 folds each (OOF source `synthv3,synthv3b600_msg`).
+- `gen4`: synthetic recipe v4 (idea 2: COCO carriers, object-shaped holes, foreign content), 6000 per method;
+  then the synth-only gate against v3 (PixelSeal 0.609, TrustMark 0.591, StegaStamp 0.659 on all real images).
 
 ## Ideas not tried yet (take from the top)
 1. Message-aware input for the extractor heads: per-position agreement map between decoder logits and the known
@@ -65,3 +66,4 @@ trunk (+0.009, noise), StegaStamp extractor head, coarse rectangle search, bigge
 | 0 | 02:10 | StegaStamp v3 5 folds (0.679 vs 0.642) | adopted, v8 submitted | 0.6691 | 0.6681 | 0 |
 | 1 | 02:15 | nothing yet (v3x folds at epoch 20/60, PixelSeal test rectangles 20/81) | queue rebuilt: 3 jobs per GPU on 2-3, idle 0-1 borrowed; message-aware heads coded | 0.6691 | 0.6681 | 0 |
 | 2 | 02:38 | nothing yet (v3x folds 0-1 at epoch 42-53/60, PixelSeal test rectangles 50/81) | borrowed-GPU jobs were preempted after 23 min and lost: training now resumes from its last epoch; message bits of synth v3 recovered; 10 message-aware folds queued (`synthv3,synthv3b600_msg`) | 0.6691 | 0.6681 | 0 |
+| 3 | 03:00 | PixelSeal test rectangles (26 % of type B accepted) | applied (gain +0.020 +- 0.008 measured on train), v9 submitted; inode quota hit at 02:43 killed 15 jobs at start, requeued, watcher added; recipe v4 coded, generation queued | 0.6691 | 0.6743 | 0 |
