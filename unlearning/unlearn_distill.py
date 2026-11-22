@@ -50,9 +50,10 @@ def parse():
     p.add_argument("--external", default=None, help="npz of unlabeled external images (prepare_external.py) used as "
                    "retain anchor instead of mixup/cutmix of forget images")
     p.add_argument("--holdout", type=int, default=1000, help="last N external images: not trained on, used for drift")
-    p.add_argument("--forget-teacher", default=None,
-                   help="checkpoint used as teacher on the forget images only: target = softmax(forget_scale * M(x) / T),"
-                        " no cap / other-tau / class-mix; the anchor term still distills the original model")
+    p.add_argument("--forget-teacher", default=None, nargs="+",
+                   help="one or more checkpoints used as teachers on the forget images only: target = mean over teachers of "
+                        "softmax(forget_scale * M(x) / T) (an ensemble, like the gold average), no cap / other-tau / "
+                        "class-mix; the anchor term still distills the original model")
     p.add_argument("--forget-scale", type=float, default=1.0, help="logit scale applied to --forget-teacher")
     p.add_argument("--forget-weight", type=float, default=1.0,
                    help="weight of the forget term; 0 = anchor-only training, the forget images are never used")
@@ -85,7 +86,8 @@ def main():
     caps_tag = f"cr{a.conf_min}-{a.conf_max}" if a.conf_min is not None else f"tc{a.target_conf}"
     caps_tag += ("_capcount" if a.cap_by == "count" else "") + ("_logcap" if a.cap_spacing == "log" else "") + (f"_cm{a.class_mix}" if a.class_mix else "")
     tag = f"{caps_tag}_tau{a.tau}" + (f"_ot{a.other_tau}" if a.other_tau != 1.0 else "") + f"_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_ep{a.epochs}_cf{a.clean_frac}" + (("_ext" if Path(a.external).stem == "external_images" else f"_ext-{Path(a.external).stem}") if a.external else "") + (f"_init-{Path(a.init).stem}" if a.init else "")
-    tag += f"_ft-{Path(a.forget_teacher).stem}_fs{a.forget_scale}" if a.forget_teacher else ""
+    tag += (f"_ft-{Path(a.forget_teacher[0]).stem}" + (f"_x{len(a.forget_teacher)}" if len(a.forget_teacher) > 1 else "")
+            + f"_fs{a.forget_scale}") if a.forget_teacher else ""
     tag += f"_fw{a.forget_weight}" if a.forget_weight != 1.0 else ""
     tag += (f"_ri{a.reinit_blocks}" if a.reinit_blocks else "") + ("_rih" if a.reinit_head else "")
     tag += f"_ns{a.noise_std}" if a.noise_std else ""
@@ -105,10 +107,11 @@ def main():
     student = load_model(Path(a.init) if a.init else MODEL_FILE)
     fteacher = None
     if a.forget_teacher:
-        fteacher = load_model(Path(a.forget_teacher)).eval()
-        for p in fteacher.parameters():
-            p.requires_grad = False
-        print(f"forget teacher {a.forget_teacher} x {a.forget_scale} (forget targets only)")
+        fteacher = [load_model(Path(f)).eval() for f in a.forget_teacher]
+        for m in fteacher:
+            for p in m.parameters():
+                p.requires_grad = False
+        print(f"forget teacher(s) {a.forget_teacher} x {a.forget_scale} (forget targets only, averaged probabilities)")
     if a.reinit_blocks or a.reinit_head:
         fresh = build_model().to(DEVICE)
         nb = len(student.blocks)
@@ -193,11 +196,12 @@ def main():
                 if fteacher is None:
                     zf, zr = teacher(torch.cat([xf, xr])).float().split([len(xf), len(xr)])  # one call, same outputs
                 else:
-                    zf, zr = fteacher(xf).float(), teacher(xr).float()
+                    zf = torch.stack([m(xf).float() for m in fteacher])  # [K, B, C]
+                    zr = teacher(xr).float()
             with torch.autocast(**amp):
                 sf, sr = student(torch.cat([xf, xr])).float().split([len(xf), len(xr)])
             if fteacher is not None:
-                target = F.softmax(a.forget_scale * zf / T, 1)
+                target = F.softmax(a.forget_scale * zf / T, -1).mean(0)  # mean of the teachers' distributions
             else:
                 target = soft_target(zf, caps[idx].to(zf.device) if caps is not None else a.target_conf, a.tau,
                                      a.other_tau)
