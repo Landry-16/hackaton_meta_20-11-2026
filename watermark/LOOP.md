@@ -2,12 +2,13 @@
 
 One iteration = read results, decide, submit if earned, refill the GPUs, log. Runs until the stop condition.
 
-## Compute (22 Nov 06:23)
-ONE node for the team, the reservation job `hold` (jrc0233). The extra general-queue nodes used from 03:43 to 06:23
-were cancelled at an organizer's request (Michel, 06:17). Never `sbatch` another node, in any queue. On this node the
-watermark queue has GPUs 2-3 (3 slots each) and borrows GPUs 0-1 while the teammates leave them idle, so about 4
-GPU-hours per hour: every candidate must be worth its cost. Heavy steps without GPU (ranker, post-processing) run on
-the laptop.
+## Compute (22 Nov 06:30)
+The team node is the reservation job `hold` (jrc0233): GPUs 2-3 for the watermark queue (3 slots each), GPUs 0-1
+borrowed while the teammates leave them idle. Nodes OUTSIDE the reservation are allowed without limit (Michel,
+06:25), but the reservation is MAGNETIC and attracts our jobs: three of the six extra nodes of 03:43 to 06:23 were
+reserved ones and had to be cancelled. Rule: `sbatch --exclude=<reservation node list>` (see `jureca/hold_general.sh`),
+and `~/start_nodeN.sh <jobid>` cancels the job at once if it lands on a reserved node, otherwise starts a queue with
+one job per GPU. Heavy steps without GPU (ranker, post-processing) run on the laptop.
 
 ## Stop
 - public score at or above 0.72 (top 5 level on 22 Nov, 01:00), or
