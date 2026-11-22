@@ -120,17 +120,36 @@ def residual(wm, region, bits, rng, margins=None):
     return res
 
 
-def make_sample_v3(wm, method, img, rng):
+def segment_shape(segs, rng, lo, hi, union=0.25):
+    """A region made of one SAM segment of the image (sometimes two), 512 x 512 uint8, or None if none fits.
+    segs: K x 128 x 128 bool (sam_segments.py). The real object-shaped regions are such segments."""
+    if segs is None or len(segs) == 0:
+        return None
+    area = segs.reshape(len(segs), -1).mean(1)
+    ok = np.flatnonzero((area >= lo) & (area <= hi))
+    if len(ok) == 0:
+        return None
+    m = segs[rng.choice(ok)].copy()
+    if rng.random() < union:
+        m |= segs[rng.choice(ok)]
+    return np.repeat(np.repeat(m, 4, 0), 4, 1).astype(np.uint8)
+
+
+def make_sample_v3(wm, method, img, rng, segs=None):
     """v3: content untouched, only the watermark residual is added; rectangles embedded at native size with 3-4 px of
     real context around them (the embedding frame is slightly larger than the mask); random blob holes (no train mask
-    shapes, so no leak from held-out folds)."""
+    shapes, so no leak from held-out folds).
+    v5 (segs given): object regions are SAM segments of the image itself, as in the real data; a third of the holes
+    too; kinds drawn as in the real data (half full, a quarter rectangles, a quarter objects)."""
     bits = rng.integers(0, 2, NBITS[method])
-    kind = rng.choice(["full", "rect", "object"], p=[0.5, 0.3, 0.2])
+    kind = rng.choice(["full", "rect", "object"], p=[0.5, 0.3, 0.2] if segs is None else [0.5, 0.25, 0.25])
     base = img.astype(np.float32)
     if kind == "full":
         res, mask = residual(wm, img, bits, rng), np.ones((SIZE, SIZE), np.uint8)
         for _ in range(rng.integers(1, 4)):
-            hole = blob(rng, rng.uniform(0.02, 0.15))
+            hole = segment_shape(segs, rng, 0.005, 0.25, union=0) if segs is not None and rng.random() < 0.33 else None
+            if hole is None:
+                hole = blob(rng, rng.uniform(0.02, 0.15))
             res[hole == 1], mask[hole == 1] = 0, 0
         out = base + res
     elif kind == "rect":
@@ -149,7 +168,9 @@ def make_sample_v3(wm, method, img, rng):
         mask[y0:y0 + h, x0:x0 + w] = 1
     else:
         res = residual(wm, img, bits, rng)
-        mask = blob(rng, rng.uniform(0.02, 0.25))
+        mask = segment_shape(segs, rng, 0.01, 0.4)
+        if mask is None:
+            mask = blob(rng, rng.uniform(0.02, 0.25))
         out = base + res * mask[:, :, None]
     return np.clip(np.round(out), 0, 255).astype(np.uint8), mask, kind, bits
 
@@ -208,7 +229,14 @@ def main():
     ap.add_argument("--v2", action="store_true", help="recipe v2: same image only, real hole shapes, degradation")
     ap.add_argument("--suffix", default="", help="appended to the set name, e.g. b -> synthv3b_<method>.npz")
     ap.add_argument("--v3", action="store_true", help="recipe v3: residual only, content untouched, native-size rectangles, measured decode")
+    ap.add_argument("--v5", action="store_true", help="recipe v5 = v3 with SAM segments of the image as object regions (needs output/sam_*.npz)")
     a = ap.parse_args()
+    a.v3 = a.v3 or a.v5
+    sam = {}
+    if a.v5:
+        from sam_segments import load_segments
+        sam = {**load_segments("train"), **load_segments("test")}
+        assert len(sam) == 1530, f"SAM segments of {len(sam)} images only"
     from wmloc.watermarks import load_watermark
     print(f"device {a.device}, cuda available {torch.cuda.is_available()}", flush=True)
     wm = load_watermark(a.method, device=a.device)
@@ -218,7 +246,8 @@ def main():
     for i in range(a.n):
         (ds1, i1), (ds2, i2) = (pool[j] for j in rng.choice(len(pool), 2, replace=False))
         if a.v3:
-            img, mask, kind, bits = make_sample_v3(wm, a.method, ds1[i1]["image"], rng)
+            it = ds1[i1]
+            img, mask, kind, bits = make_sample_v3(wm, a.method, it["image"], rng, sam[it["image_name"]] if a.v5 else None)
             accs.append(float((wm.decode(to_tensor(img).to(a.device)).cpu().numpy()[0] == bits).mean()))
         elif a.v2:
             img, mask, kind, bits = make_sample_v2(wm, a.method, ds1[i1]["image"], rng)
@@ -232,7 +261,7 @@ def main():
         if (i + 1) % 100 == 0 or i + 1 == a.n:
             print(f"{a.method} {i + 1}/{a.n} samples, {time.time() - t0:.0f} s", flush=True)
     OUT.mkdir(exist_ok=True)
-    tag = "v3" if a.v3 else "v2" if a.v2 else ""
+    tag = "v5" if a.v5 else "v3" if a.v3 else "v2" if a.v2 else ""
     extra = {"acc": np.array(accs, np.float32)} if accs else {}
     from seg_train import retry                                  # the shared inode quota may refuse the write for a while
     retry(lambda: np.savez(OUT / f"synth{tag}{a.suffix}_{a.method}{'_quick' if a.calibrate else ''}.npz",
