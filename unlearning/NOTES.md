@@ -202,3 +202,16 @@ clean loss 4.71 (2.89), aug 5.07 (3.18), ext KL 0.063 (7b raw at head 1.40: ~4.8
 - Forget-teacher family (M = 7b raw, lr 1e-4): more epochs and more anchor weight lower the ext KL (0.049-0.068);
   the scale sets loss level and spread. Scales 1.4 / 1.8 / 2.0 and seeds 1-3 (for a same-setting soup) being scored.
 - Submitter now counts its cooldown from the start of a submission (one slot per 10 min).
+
+## Rounds 17-25 (22 Nov, 06:40)
+Best public **0.4058** = 13b recipe with a generated in-distribution anchor (Philibert: sd-turbo text-to-image, 2,388
+images; full set $TEAM_DIR/unlearning/external_gen.npz, 29,850 images, --holdout 1000) instead of Imagenette.
+- Drift on generated validation images: 13b 0.22 / agree 0.77 (0.30 / 0.64 in the 45 classes) -> 0.07 with the
+  generated anchor, but the score only rose +0.011: the forget term is the main loss, not the retain term.
+- Gold simulators (last 6 blocks reset and rebuilt on generated images, forget images never seen): forget acc 0.23-0.29,
+  loss ~3.0 (2.5); their wrong class is the original's runner-up only 30-36 % of the time; answers broad at T=2
+  (top prob 0.38, entropy 2.4) vs 13b (0.575, 1.45). Sharper targets scored worse (ws 2.2 0.3816 / 0.3855).
+- Model inversion anchor (invert.py, Mirado): images keep the dataset's style but no objects; drift on generated val
+  0.24 / 0.75 (= Imagenette), expected ~0.39-0.40.
+- Organizers: any external data allowed; one node per team (the reservation is magnetic; general-queue nodes need
+  --exclude of the reserved nodes). Final ranking = best submission.
