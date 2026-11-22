@@ -20,6 +20,9 @@ def main():
     ap.add_argument("--methods", default="pixelseal,trustmark")
     ap.add_argument("--tag", default="synthv2400", help="seg_ext checkpoint suffix")
     ap.add_argument("--head", default="small", choices=["small", "big"], help="seg_ext head the checkpoints were trained with")
+    ap.add_argument("--tta", action="store_true", help="seg_ext models: average with the mirrored image")
+    ap.add_argument("--oof", action="store_true", help="instead of the test set: re-predict each held-out fold with its own model, "
+                    "write oof_ext_<method>_fold<k>_<tag>_tta.npz (to judge --tta with compare_oof.py)")
     ap.add_argument("--real-tag", default=None, help="seg_real checkpoint suffix (then methods come from seg_real)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
@@ -35,7 +38,19 @@ def main():
             from wmloc.watermarks import load_watermark
             ckpts = sorted(OUT.glob(f"segext_{m}_fold*_{a.tag}.pt"))
             model = ExtSegmenter(m, load_watermark(m, device="cpu") if m != "stegastamp" else None, head=a.head).to(a.device)
-            run = lambda: predict_ext(model, t_img[s], t_extra[s][:, -1:], a.device)
+            run = lambda: predict_ext(model, t_img[s], t_extra[s][:, -1:], a.device, tta=a.tta)
+            if a.oof:
+                from rect_search import folds_of
+                r_img, _, r_methods, r_extra, r_full, r_names = load_split("train")
+                sel = np.flatnonzero(r_methods == m)
+                fold = folds_of(r_methods[sel], r_full[sel])                     # same split as seg_ext.py
+                for k in range(5):
+                    model.load_state_dict(torch.load(OUT / f"segext_{m}_fold{k}_{a.tag}.pt", map_location=a.device, weights_only=True))
+                    ev = sel[fold == k]
+                    probs = predict_ext(model, r_img[ev], r_extra[ev][:, -1:], a.device, tta=True)
+                    np.savez(OUT / f"oof_ext_{m}_fold{k}_{a.tag}_tta.npz", names=np.array(r_names)[ev], probs=probs.astype(np.float16))
+                    print(f"{m}: fold {k} re-predicted with flip averaging", flush=True)
+                continue
         probs = []
         for c in ckpts:
             model.load_state_dict(torch.load(c, map_location=a.device, weights_only=True))
