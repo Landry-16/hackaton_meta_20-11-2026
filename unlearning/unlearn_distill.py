@@ -77,6 +77,8 @@ def main():
     reserve(f"{out}_e{ep}.pt" for ep in range(1, a.epochs + 1) if ep % a.save_every == 0 or ep == a.epochs)
 
     imgs = load_forget_images()
+    if DEVICE == "cuda":  # keep the uint8 images on the GPU once (0.5 GB), no host-to-device copy per step
+        imgs = imgs.to(DEVICE)
     if a.n:
         imgs = imgs[: a.n]
     teacher = load_model(MODEL_FILE).eval()
@@ -106,6 +108,8 @@ def main():
     if a.external:
         ext = load_forget_images(Path(a.external))  # same npz layout and checks
         ext_train, ext_eval = ext[: -a.holdout], ext[-a.holdout:]
+        if DEVICE == "cuda":
+            ext_train = ext_train.to(DEVICE)
         orig_ext = logits_views(teacher, ext_eval, views=("clean",))["clean"]
         print(f"external retain anchor: {len(ext_train)} train / {len(ext_eval)} held-out images")
     opt = torch.optim.AdamW(params, lr=a.lr, weight_decay=0.0)
@@ -125,9 +129,9 @@ def main():
             else:
                 xr = proxy_retain(augment(x))
             with torch.no_grad(), torch.autocast(**amp):
-                zf, zr = teacher(xf).float(), teacher(xr).float()
+                zf, zr = teacher(torch.cat([xf, xr])).float().split([len(xf), len(xr)])  # one call, same outputs
             with torch.autocast(**amp):
-                sf, sr = student(xf).float(), student(xr).float()
+                sf, sr = student(torch.cat([xf, xr])).float().split([len(xf), len(xr)])
             target = soft_target(zf, caps[idx].to(zf.device) if caps is not None else a.target_conf, a.tau, a.other_tau)
             if class_avg is not None:
                 target = mix_class_target(target, zf, class_avg[pseudo[idx]], a.class_mix)
