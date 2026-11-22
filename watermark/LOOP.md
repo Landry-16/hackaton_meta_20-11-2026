@@ -48,13 +48,37 @@ SRC = `pixelseal=synthv3,synthv3b2000_long;trustmark=synthv3,synthv3b2000_long_t
 `seg_rank.py --source "$SRC" --apply` and
 `postproc.py --source "$SRC" --raw-methods pixelseal --seg --test-prefix seg_probs_ens --out submission_v11.pt --apply`
 
-## Candidates queued or running (05:00)
-- `l4k`: 4000 synth per epoch out of v3+v3b+v3c (more volume again), 5 folds, against `long`.
-- `ms`: `long` with the trunk also at twice the resolution (`--scales 1,2`), 5 folds, against `long` (about 50 min).
-- `v5`: synthetic recipe v5 (object regions and a third of the holes are SAM segments of the image, as in the real
-  data) instead of v3: PixelSeal / TrustMark `synthv5,synthv5b2000_long`, StegaStamp `real_synthv5,synthv5b300`,
-  5 folds + fold all. `v35` = v3 + v5 pooled, adopted only if it beats `v5` itself under the rule.
-- Flip averaging for PixelSeal stays off (+0.0047 +- 0.0025, under the rule).
+## Candidates queued or running (06:00)
+- v13 being built: PixelSeal `synthv3,synthv3b2000_ms1-2_long`, TrustMark `blend_ms_l4k_tta`, StegaStamp
+  `real_synthv5,synthv5b1000` (`~/build.sh <jobid> v13 "<SRC>"` on the login node runs ranker + post-processing on a
+  compute node; the login node is too loaded for it).
+- `ss3k`: StegaStamp ImageNet model with 3000 v5 samples per method per epoch (1000 gave +0.098), 5 folds + all.
+- `ms4k`: both winning factors together (scales 1,2 and 4000 synth per epoch), PixelSeal / TrustMark, 5 folds + all.
+- `ms3`: PixelSeal with scales 1,2,3. `l8k`: 8000 per epoch out of v3+v3b+v3c+v5+v5b.
+- `gen5`: 12,000 more v5 samples per method (sets v5c, v5d).
+
+## Decisions of 05:15 to 05:45 (all on 5 folds, paired)
+| Method | Candidate against | Gain | Decision |
+|---|---|---|---|
+| TrustMark | 4000 per epoch (`l4k`) vs `long` | +0.0132 +- 0.0059 | adopted |
+| TrustMark | scales 1,2 (`ms`) vs `long` | +0.0190 +- 0.0061 | adopted |
+| TrustMark | mean of `ms` and `l4k`, both flip-averaged, vs `ms` flip-averaged | +0.0149 +- 0.0037 | adopted (0.6648) |
+| TrustMark | adding `long` to that mean | -0.0086 +- 0.0024 | rejected |
+| TrustMark | v5 instead of v3, v3+v5 | -0.003, +0.001 | rejected |
+| PixelSeal | `l4k` vs `long` | +0.0107 +- 0.0048 | passes |
+| PixelSeal | `ms` vs `long` | +0.0428 +- 0.0067 | adopted (0.6758) |
+| PixelSeal | mean of `ms` and `l4k` vs `ms` | +0.003 | rejected (`ms` alone) |
+| PixelSeal | flip averaging on `ms` | +0.0035 +- 0.0027 | rejected |
+| PixelSeal | v5 instead of v3 / v3+v5 | +0.0066 +- 0.0049 / +0.0084 +- 0.0037 | first rejected, second passes but is below `ms` |
+| StegaStamp | recipe v5, 300 per method, vs v3 | +0.0164 +- 0.0082 | adopted |
+| StegaStamp | v5, 1000 per method, vs 300 | +0.0975 +- 0.0098 | adopted (0.7933) |
+Post-processing: type A threshold option `thrA` (+0.006 nested CV); option search split by image type (same
+result, 6 times faster); ranker averaged over 20 seeds (5 gave picks that moved between runs).
+Checked and dropped: best-fit rectangle as a ranker candidate (0.678 vs 0.684); StegaStamp rectangle search from
+the prediction box (only 15 to 18 % of the boxes have their four edges within 16 px of the truth, the decode basin is
+2 to 4 px wide: expected +0.005 at best).
+Type A diagnosis: hole recall 0.41 to 0.50, precision 0.53 to 0.84; small holes (under 150 cells) are missed
+(recall 0.05 for PixelSeal / TrustMark).
 
 ## Segment snapping (declared 04:20, BEFORE any result)
 Observation on 16 real train images: the object-shaped regions follow the object contours of the image itself (the
@@ -151,3 +175,4 @@ vs 0.659).
 | 6 | 04:00 | underfitting screens (table above) | volume is the fix: `long` and `big` queued on 5 folds + fold all (24 jobs); 3 more general-queue nodes requested (start estimated 04:45), 1 job per GPU; 106 rejected files deleted (inode quota at 2,600 free) | 0.6691 | 0.6743 | 0 |
 | 7 | 04:35 | `long` 5 folds: TrustMark +0.0235 +- 0.0062, PixelSeal +0.0146 +- 0.0067 (both adopted); `big` against `long`: -0.002 and -0.006 (rejected); SAM gate (table above) | v10 = `long` models + segment snapping, submitted | 0.6854 | 0.6950 | 0 |
 | 8 | 05:00 | flip averaging on the saved fold models (TrustMark +0.0086 +- 0.0028 adopted, PixelSeal +0.0047 +- 0.0025 kept off); candidate ranker (type B: +0.032 over the best hand rule) | v11 = v10 + TrustMark flip averaging + ranker, submitted; v5 data generated (12,000 per method); 40 jobs queued; 2 more general nodes requested (7 in total) | 0.6991 | 0.7167 | 0 |
+| 9 | 05:40 | decisions table above | v12 = TrustMark mean of two variants + StegaStamp v5 + type A threshold, submitted | 0.7068 | 0.7311 | 0 |
