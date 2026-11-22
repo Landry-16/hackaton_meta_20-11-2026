@@ -2,6 +2,13 @@
 
 One iteration = read results, decide, submit if earned, refill the GPUs, log. Runs until the stop condition.
 
+## Compute (22 Nov 06:23)
+ONE node for the team, the reservation job `hold` (jrc0233). The extra general-queue nodes used from 03:43 to 06:23
+were cancelled at an organizer's request (Michel, 06:17). Never `sbatch` another node, in any queue. On this node the
+watermark queue has GPUs 2-3 (3 slots each) and borrows GPUs 0-1 while the teammates leave them idle, so about 4
+GPU-hours per hour: every candidate must be worth its cost. Heavy steps without GPU (ranker, post-processing) run on
+the laptop.
+
 ## Stop
 - public score at or above 0.72 (top 5 level on 22 Nov, 01:00), or
 - Sunday 22 Nov 11:00 Paris time: stop experiments, check that the best validated submission is the one on the board
@@ -49,14 +56,15 @@ variants), then ON THE LAPTOP (the login node and shared compute nodes are 20 ti
 `postproc.py --source "$SRC" --raw-methods pixelseal --seg --test-prefix seg_probs_ens --out submission_vN.pt --apply`,
 `rsync` the submission back and submit from the cluster.
 
-## Candidates queued or running (06:00)
-- v13 being built: PixelSeal `synthv3,synthv3b2000_ms1-2_long`, TrustMark `blend_ms_l4k_tta`, StegaStamp
-  `real_synthv5,synthv5b1000` (`~/build.sh <jobid> v13 "<SRC>"` on the login node runs ranker + post-processing on a
-  compute node; the login node is too loaded for it).
-- `ss3k`: StegaStamp ImageNet model with 3000 v5 samples per method per epoch (1000 gave +0.098), 5 folds + all.
-- `ms4k`: both winning factors together (scales 1,2 and 4000 synth per epoch), PixelSeal / TrustMark, 5 folds + all.
-- `ms3`: PixelSeal with scales 1,2,3. `l8k`: 8000 per epoch out of v3+v3b+v3c+v5+v5b.
-- `gen5`: 12,000 more v5 samples per method (sets v5c, v5d).
+## Candidates queued or running (06:25, in priority order, one node)
+1. StegaStamp 3000 per method, fold 4 (the 4 other folds: +0.0195 +- 0.0083 against 1000).
+2. `pl13`: StegaStamp model + the 1020 test images labelled by submission v13, 5 folds + all.
+3. `onlyst`: ImageNet model trained on StegaStamp alone, 6000 v5 samples per epoch out of 24,000, 5 folds + all.
+4. `ms4k` PixelSeal (scales 1,2 and 4000 per epoch; the same change gave TrustMark +0.015), 5 folds + all.
+5. `pl13` PixelSeal (scales 1,2 + pseudo-labels), 5 folds.
+Dropped with the extra nodes: scales 1,2,3; 8000 per epoch; multi-method 6000; single-method TrustMark / PixelSeal.
+Ready, not yet submitted: TrustMark `blend4` (mean of 4 variants, +0.0073 +- 0.0019 over the current mean).
+Rejected: adding the ImageNet model to the PixelSeal / TrustMark heads (-0.019, -0.038).
 
 ## Decisions of 05:15 to 05:45 (all on 5 folds, paired)
 | Method | Candidate against | Gain | Decision |

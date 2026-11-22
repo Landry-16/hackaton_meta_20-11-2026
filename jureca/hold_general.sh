@@ -8,11 +8,8 @@
 #SBATCH --time=08:30:00
 #SBATCH --output=logs/%x-%j.out
 #
-# A second whole GPU node from the GENERAL queue (no reservation): the organizers allow it, it does not count for the
-# one-node-per-team limit of the cispahack reservation. It may wait in the general queue before starting.
-# The one-job-per-team rule applies to the cispahack reservation only (jureca/hold.sh): several of these may run.
-# Do not leave one idle: it spends the shared project budget. Start a queue on it (see jureca/gpu_queue.sh).
-#   sbatch -J hold2 --time=07:00:00 jureca/hold_general.sh
-# Release it when done:  scancel <jobid>
+# DO NOT USE during the hackathon. A node from the general queue (no reservation). On 22 Nov 03:40 the organizers
+# wrote that such jobs do not count for the one-node limit; at 06:17 an organizer asked us to cancel them: ONE node
+# per team in total. All were cancelled at 06:23. Kept only as a record of what was run.
 echo "holding $(hostname) since $(date -Is)"
 sleep infinity
