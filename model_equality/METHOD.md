@@ -1,4 +1,4 @@
-# Task 2, model equality: how we went from 0.10 to 0.85
+# Task 2, model equality: how we went from 0.10 to 1.00
 
 33 endpoints, 3 families of 11. Score = 0.1 x MCC(same family) + 0.9 x MCC(same model inside a family).
 Budget: 100 answers per endpoint for the whole event, text only (no logprobs, `n` and temperature ignored).
@@ -51,6 +51,11 @@ the four new pairs is in the public split, about 1 case in 4).
 | probe F2 + ep-32 | 0.70 | ep-32 is the F2 plain: F2 complete |
 | **F1 temperature ep-14 -> ep-33** | **0.85** | temperature fit confirmed; ep-14 is a strong LoRA |
 | probe F1 + ep-17 | 0.85 | no change: no tested pair in the public split |
+| probe F3 + ep-19 | 0.85 | no change (ep-15 excluded: fp8 likelihood-ratio signature) |
+| **F3 + ep-13, F1 + ep-17** | **1.00** | ep-13 is the F3 plain; ep-17 carried along (calibration identical to the confirmed F2 plain) |
+
+Final grouping: F1 {02 sys, 04 watermark, 17 plain, 23 persona, 33 temperature}, F2 {06, 08, 20, 30, 32},
+F3 {10, 13, 16, 29, 31}; every other endpoint alone.
 
 ## What did not work (and why)
 

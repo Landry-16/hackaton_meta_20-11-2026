@@ -21,7 +21,7 @@ Leaks and likelihoods also identify the base models: Qwen2.5-3B, Qwen2.5-1.5B, L
 simulated fp8 weights (validated on the practice set: plain +42, fp8 -33), then one public probe per candidate:
 the score rises only if the candidate is the true plain.
 
-**Result (20 s).** 0.10 -> 0.55 (disguises) -> 0.70 (F2 plain) -> 0.85 (temperature fit fixes F1), with about
+**Result (20 s).** 0.10 -> 0.55 (disguises) -> 0.70 (F2 plain) -> 0.85 (temperature fit fixes F1) -> 1.00 (F3 plain), with about
 60 of 100 answers spent per endpoint. Every change is a fact about one endpoint, not a tuned threshold, so it
 carries over to the hidden 70 % of pairs.
 
