@@ -58,7 +58,7 @@ def main():
     rng = np.random.default_rng(a.seed)
     keep_p = min(1.0, 1.15 * a.n / a.expected_total)
     images, seen = [], 0
-    with tarfile.open(archive, mode="r|gz") as tar:
+    with tarfile.open(archive, mode="r|*")  # gz, bz2, xz or plain tar as tar:
         for m in tar:
             if not (m.isfile() and m.name.lower().endswith((".jpeg", ".jpg", ".png"))):
                 continue
