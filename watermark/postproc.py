@@ -146,15 +146,28 @@ def main():
         fold = folds_of(np.array([method] * len(names)), full)
         grid = RAW_GRID if method in a.raw_methods.split(",") else GRID          # raw: only the rectangle rule is tuned
         held_scores, base_scores = np.zeros(len(names)), score_set(names, probs, gts, info, base_prm, use_rect=False)
+        typeb = np.array([info[n][0] for n in names])
+        a_keys = [k for k in grid if k in ("thrA", "segA", "floor")]     # the only options a type A image reads
+        b_keys = [k for k in grid if k not in ("thrA", "segA")]          # type B images read the rest (and floor)
+
+        def best_on(sel):
+            """Best options on the images `sel`. Type A and type B images read disjoint options (floor apart), so the
+            two groups are searched separately: same optimum as the full product, a fraction of the evaluations."""
+            out = {}
+            for keys, group in ((b_keys, sel & typeb), (a_keys, sel & ~typeb)):
+                sub = [n for n, t in zip(names, group) if t]
+                combos = [dict(zip(keys, v)) for v in itertools.product(*(grid[k] for k in keys))]
+                fill = {k: grid[k][0] for k in grid}
+                best = max(combos, key=lambda c: score_set(sub, probs, gts, info, {**fill, **c}).sum()) if sub else combos[0]
+                out = {**best, **out} if keys is a_keys else {**out, **best}       # floor: the type B choice wins
+            return {k: out[k] for k in grid}
+
         for k in range(5):
             tr, te = fold != k, fold == k
             if not te.any():
                 continue
-            best = max((dict(zip(grid, v)) for v in itertools.product(*grid.values())),
-                       key=lambda prm: score_set([n for n, t in zip(names, tr) if t], probs, gts, info, prm).mean())
-            held_scores[te] = score_set([n for n, t in zip(names, te) if t], probs, gts, info, best)
-        chosen[method] = max((dict(zip(grid, v)) for v in itertools.product(*grid.values())),
-                             key=lambda prm: score_set(names, probs, gts, info, prm).mean())
+            held_scores[te] = score_set([n for n, t in zip(names, te) if t], probs, gts, info, best_on(tr))
+        chosen[method] = best_on(np.ones(len(names), bool))
         d = held_scores - base_scores
         rows.append((method, len(names), base_scores.mean(), held_scores.mean(), d.mean(), d.std() / np.sqrt(len(d))))
         print(f"{method:10s} n={len(names)} raw {base_scores.mean():.4f} -> post-processed (nested CV) {held_scores.mean():.4f} "
