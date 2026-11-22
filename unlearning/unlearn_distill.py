@@ -12,11 +12,12 @@ import argparse
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
 from task_template import DEVICE, MODEL_FILE, build_model, load_forget_images, load_model, preprocess
-from ulib import (T, augment, class_wrong_dist, count_caps, difficulty_caps, fmt, kl_t, logits_views, mix_class_target,
+from ulib import (augment_wide, T, augment, class_wrong_dist, count_caps, difficulty_caps, fmt, kl_t, logits_views, mix_class_target,
                   proxy_report, proxy_retain, reserve, soft_target)
 
 
@@ -55,6 +56,44 @@ def parse():
                         "softmax(forget_scale * M(x) / T) (an ensemble, like the gold average), no cap / other-tau / "
                         "class-mix; the anchor term still distills the original model")
     p.add_argument("--forget-scale", type=float, default=1.0, help="logit scale applied to --forget-teacher")
+    p.add_argument("--wrong-scale", type=float, default=None,
+                   help="with --forget-teacher: decoupled target. Wrong classes follow softmax(wrong_scale * M(x)); the "
+                        "true class (original's clean argmax) is set so the T=1 loss equals the wanted per-image loss")
+    p.add_argument("--level-scale", type=float, default=None,
+                   help="wanted loss = CE(level_scale * M(x), y); default = --forget-scale")
+    p.add_argument("--loss-mean", type=float, default=None, help="remap the wanted loss to this mean (needs --loss-std)")
+    p.add_argument("--loss-std", type=float, default=None, help="... and this std (affine map of the teacher's losses)")
+    p.add_argument("--count-level", type=float, nargs=2, default=None, metavar=("LO", "HI"),
+                   help="with --wrong-scale: wanted loss = class mean set by the class's number of forget images (LO for "
+                        "the smallest class, HI for the largest, linear in the count, exponent --count-pow) + --within-std * "
+                        "the teacher's standardised within-class loss")
+    p.add_argument("--want-npz", default=None,
+                   help="with --wrong-scale: per-image wanted loss on the clean image (npz key 'want', same order as the "
+                        "forget file); augmented views get + --aug-shift")
+    p.add_argument("--mask-full", action="store_true",
+                   help="with --wrong-scale: the classes whose forget count is at the cap (emptied classes) get no mass as "
+                        "WRONG classes (logit -30); the label itself is still set by the level rule")
+    p.add_argument("--within-std", type=float, default=1.5)
+    p.add_argument("--count-pow", type=float, default=1.0)
+    p.add_argument("--within-std-lo", type=float, default=None,
+                   help="within-class spread for the classes that are NOT at the cap (default: same as --within-std)")
+    p.add_argument("--wide-aug", action="store_true", help="forget views use augment_wide (colour, blur, noise, grey, ...)")
+    p.add_argument("--clean-target", action="store_true",
+                   help="with --forget-teacher: the teacher sees the CLEAN image for every view, so all altered views of an "
+                        "image get the same target (and the same wanted loss)")
+    p.add_argument("--aug-shift", type=float, default=0.0,
+                   help="with --wrong-scale: added to the wanted loss of AUGMENTED views only (clean views unchanged)")
+    p.add_argument("--mix-scales", type=float, nargs="+", default=None,
+                   help="with --wrong-scale: the wrong-class shape is the MEAN of softmax(s_i * teacher_i / T) (one scale per "
+                        "teacher), a covering mixture of sharp answers; the level still comes from the first teacher")
+    p.add_argument("--wrong-topk", type=int, default=0,
+                   help="with --wrong-scale: keep only the K most likely wrong classes of the shape (same ratios), zero the rest")
+    p.add_argument("--shape-orig", action="store_true",
+                   help="with --wrong-scale: the wrong-class shape comes from the ORIGINAL model's logits on the same view "
+                        "(z_gold ~ z_orig minus the memorised boost of the label); the loss level still comes from the teacher")
+    p.add_argument("--level-weight", type=float, default=0.0,
+                   help="with --wrong-scale: extra term level_weight * smooth_l1(T=1 CE of the student on the label, wanted loss)")
+    p.add_argument("--keep-ls", action="store_true", help="--reinit-blocks keeps the original LayerScale gammas")
     p.add_argument("--forget-weight", type=float, default=1.0,
                    help="weight of the forget term; 0 = anchor-only training, the forget images are never used")
     p.add_argument("--reinit-blocks", type=int, default=0,
@@ -95,6 +134,16 @@ def main():
     tag = f"{caps_tag}_tau{a.tau}" + (f"_ot{a.other_tau}" if a.other_tau != 1.0 else "") + f"_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_ep{a.epochs}_cf{a.clean_frac}" + (("_ext" if Path(a.external).stem == "external_images" else f"_ext-{Path(a.external).stem}") if a.external else "") + (f"_init-{Path(a.init).stem}" if a.init else "")
     tag += (f"_ft-{Path(a.forget_teacher[0]).stem}" + (f"_x{len(a.forget_teacher)}" if len(a.forget_teacher) > 1 else "")
             + f"_fs{a.forget_scale}") if a.forget_teacher else ""
+    tag += (f"_ws{a.wrong_scale}" + (f"_ls{a.level_scale}" if a.level_scale is not None else "")
+            + (f"_lm{a.loss_mean}-{a.loss_std}" if a.loss_mean is not None else "")
+            + (f"_lw{a.level_weight}" if a.level_weight else "") + ("_so" if a.shape_orig else "") + (f"_tk{a.wrong_topk}" if a.wrong_topk else "")
+            + ("_mx" + "-".join(str(v) for v in a.mix_scales) if a.mix_scales else "")
+            + (f"_as{a.aug_shift}" if a.aug_shift else "")) if a.wrong_scale is not None else ""
+    tag += ("_wa" if a.wide_aug else "") + ("_ct" if a.clean_target else "") + ("_mf" if a.mask_full else "")
+    tag += f"_{Path(a.want_npz).stem}" if a.want_npz else ""
+    tag += (f"_cl{a.count_level[0]}-{a.count_level[1]}_w{a.within_std}" + (f"_p{a.count_pow}" if a.count_pow != 1.0 else "")
+            + (f"_wl{a.within_std_lo}" if a.within_std_lo is not None else "")) if a.count_level else ""
+    tag += "_kls" if a.keep_ls else ""
     tag += f"_fw{a.forget_weight}" if a.forget_weight != 1.0 else ""
     tag += (f"_ri{a.reinit_blocks}" if a.reinit_blocks else "") + ("_rih" if a.reinit_head else "")
     tag += f"_ns{a.noise_std}" if a.noise_std else ""
@@ -127,7 +176,7 @@ def main():
         fresh_sd = fresh.state_dict()
         with torch.no_grad():
             for n, t in student.state_dict().items():
-                if any(n.startswith(x) for x in prefixes):
+                if any(n.startswith(x) for x in prefixes) and not (a.keep_ls and ".ls" in n):
                     t.copy_(fresh_sd[n])
         del fresh
         if a.reinit_blocks > a.train_blocks:
@@ -152,6 +201,28 @@ def main():
     elif a.conf_min is not None:
         caps = difficulty_caps(teacher, imgs, a.conf_min, a.conf_max, spacing=a.cap_spacing)
         print(f"per-image caps: min {caps.min():.3f} median {caps.median():.3f} max {caps.max():.3f}")
+    y_all = mu0 = sd0 = None
+    if fteacher is not None and a.wrong_scale is not None:
+        y_all = logits_views(teacher, imgs, views=("clean",))["clean"].argmax(1)
+        lvl = a.level_scale if a.level_scale is not None else a.forget_scale
+        zc = torch.stack([logits_views(m, imgs, views=("clean",))["clean"] for m in (fteacher[:1] if a.mix_scales else fteacher)]).mean(0)
+        l0 = F.cross_entropy(lvl * zc, y_all, reduction="none")
+        mu0, sd0 = l0.mean().item(), l0.std().item()
+        cnt_all = torch.bincount(y_all, minlength=l0.numel() and 100).float()
+        mu_c = torch.zeros(100).scatter_add_(0, y_all, l0) / cnt_all.clamp_min(1)
+        sd_w = (l0 - mu_c[y_all]).std().item()
+        nz = cnt_all[cnt_all > 0]
+        frac_c = ((cnt_all - nz.min()) / (nz.max() - nz.min())).clamp(0, 1)
+        full_m = cnt_all >= nz.max() - 1
+        W_all = torch.from_numpy(np.load(a.want_npz)["want"]).float() if a.want_npz else None
+        if a.mask_full:
+            print(f"mask-full: {int(full_m.sum())} classes masked as wrong classes: {full_m.nonzero().flatten().tolist()}")
+        if a.count_level:
+            lvl_c = a.count_level[0] + (a.count_level[1] - a.count_level[0]) * frac_c ** a.count_pow
+            print(f"count-level: class means {lvl_c[cnt_all > 0].min():.2f}..{lvl_c[cnt_all > 0].max():.2f}, image mean "
+                  f"{lvl_c[y_all].mean():.2f}, between-class std {lvl_c[y_all].std():.2f}, teacher within-class std {sd_w:.2f}")
+        print(f"decoupled target: wrong-scale {a.wrong_scale}, level-scale {lvl}, teacher clean loss {mu0:.3f} ({sd0:.3f})"
+              + (f" -> remapped to {a.loss_mean} ({a.loss_std})" if a.loss_mean is not None else ""))
     pseudo = class_avg = None
     if a.class_mix:
         pseudo, class_avg = class_wrong_dist(clean_all)
@@ -194,7 +265,8 @@ def main():
                 continue
             x = preprocess(imgs[idx])
             keep = torch.rand(len(x), device=x.device) < a.clean_frac
-            xf = torch.where(keep[:, None, None, None], x, augment(x))
+            xf = torch.where(keep[:, None, None, None], x, augment_wide(x) if a.wide_aug else augment(x))
+            xt = x if a.clean_target else xf
             if ext_train is not None:
                 xr = augment(preprocess(ext_train[torch.randint(len(ext_train), (len(x),))]))
             else:
@@ -203,18 +275,51 @@ def main():
                 if fteacher is None:
                     zf, zr = teacher(torch.cat([xf, xr])).float().split([len(xf), len(xr)])  # one call, same outputs
                 else:
-                    zf = torch.stack([m(xf).float() for m in fteacher])  # [K, B, C]
+                    zf = torch.stack([m(xt).float() for m in fteacher])  # [K, B, C]
                     zr = teacher(xr).float()
+                    zo_f = teacher(xt).float() if a.shape_orig else None
             with torch.autocast(**amp):
                 sf, sr = student(torch.cat([xf, xr])).float().split([len(xf), len(xr)])
             if fteacher is not None:
-                target = F.softmax(a.forget_scale * zf / T, -1).mean(0)  # mean of the teachers' distributions
+                if a.wrong_scale is None:
+                    target = F.softmax(a.forget_scale * zf / T, -1).mean(0)  # mean of the teachers' distributions
+                else:
+                    yb = y_all[idx].to(zf.device)
+                    zm = zf[0] if a.mix_scales else zf.mean(0)
+                    want = F.cross_entropy((a.level_scale if a.level_scale is not None else a.forget_scale) * zm, yb,
+                                           reduction="none")
+                    if W_all is not None:
+                        want = W_all[idx].to(want.device) + a.within_std * (want - l0[idx].to(want.device)) / sd_w
+                    elif a.count_level:
+                        yc = yb.cpu()
+                        wsd = a.within_std if a.within_std_lo is None else torch.where(full_m[yc], a.within_std, a.within_std_lo).to(want.device)
+                        want = lvl_c[yc].to(want.device) + wsd * (want - mu_c[yc].to(want.device)) / sd_w
+                    elif a.loss_mean is not None:
+                        want = a.loss_mean + a.loss_std * (want - mu0) / sd0
+                    if a.aug_shift:
+                        want = want + a.aug_shift * (~keep).float()
+                    want = want.clamp(0.02, 60.0)
+                    zw = a.wrong_scale * (zo_f if a.shape_orig else zm)
+                    if a.mix_scales:
+                        sc = torch.tensor(a.mix_scales, device=zf.device)[:, None, None]
+                        zw = T * torch.log(F.softmax(sc * zf / T, -1).mean(0) + 1e-12)
+                    if a.mask_full:
+                        zw = zw.masked_fill(full_m.to(zw.device)[None, :], -30.0)
+                    if a.wrong_topk:
+                        zt = zw.scatter(1, yb[:, None], float("-inf"))
+                        kth = zt.topk(a.wrong_topk, 1).values[:, -1:]
+                        zw = torch.where(zt >= kth, zw, torch.full_like(zw, -1e4))
+                    lse = torch.logsumexp(zw.scatter(1, yb[:, None], float("-inf")), 1)
+                    zw = zw.scatter(1, yb[:, None], (lse - torch.log(torch.expm1(want)))[:, None])
+                    target = F.softmax(zw / T, 1)
             else:
                 target = soft_target(zf, caps[idx].to(zf.device) if caps is not None else a.target_conf, a.tau,
                                      a.other_tau)
             if fteacher is None and class_avg is not None:
                 target = mix_class_target(target, zf, class_avg[pseudo[idx]], a.class_mix)
             lf = F.kl_div(F.log_softmax(sf / T, 1), target, reduction="batchmean")
+            if fteacher is not None and a.wrong_scale is not None and a.level_weight:
+                lf = lf + a.level_weight * F.smooth_l1_loss(F.cross_entropy(sf, yb, reduction="none"), want)
             lr_ = F.kl_div(F.log_softmax(sr / T, 1), F.softmax(zr / T, 1), reduction="batchmean")
             loss = a.forget_weight * lf + a.alpha * lr_
             if a.l2sp:

@@ -15,12 +15,22 @@ T = 2.0  # temperature used by the scorer for every KL
 
 def reserve(paths) -> None:
     """Create the output files up front: overwriting an existing file needs no new inode, so a full
-    file system (inode quota) cannot make the final torch.save fail after a whole run."""
+    file system (inode quota) cannot make the final torch.save fail after a whole run.
+    If the quota is already exhausted, take over a spare file out/_free_*.pt (rename = no new inode)."""
     for p in paths:
         p = Path(p)
         p.parent.mkdir(parents=True, exist_ok=True)
-        if not p.exists():
+        if p.exists():
+            continue
+        try:
             p.touch()
+        except OSError:
+            spare = sorted(p.parent.glob("_free_*.pt"))
+            if not spare:
+                raise
+            spare[0].rename(p)
+            open(p, "w").close()  # empty it: a crashed run must not leave old weights under the new name
+            print(f"reserve: took over {spare[0].name} for {p.name}")
 
 
 def augment(x: torch.Tensor, scale=(0.75, 1.0), max_rot_deg=10.0, jitter=0.1) -> torch.Tensor:
@@ -41,6 +51,36 @@ def augment(x: torch.Tensor, scale=(0.75, 1.0), max_rot_deg=10.0, jitter=0.1) ->
     br = torch.empty(b, 1, 1, 1, device=x.device).uniform_(-jitter, jitter)
     m = x.mean(dim=(1, 2, 3), keepdim=True)
     return ((x - m) * c + m + br).clamp(-1, 1)
+
+
+def augment_wide(x: torch.Tensor) -> torch.Tensor:
+    """Wider family for the hidden altered copies: stronger geometry, then per-image random grey / blur / low-res /
+    noise / brightness / contrast / cutout."""
+    b, dev, h = x.shape[0], x.device, x.shape[-1]
+    x = augment(x, scale=(0.6, 1.0), max_rot_deg=25.0, jitter=0.15)
+
+    def pick(p):
+        return (torch.rand(b, device=dev) < p)[:, None, None, None]
+
+    g = (0.299 * x[:, 0] + 0.587 * x[:, 1] + 0.114 * x[:, 2]).unsqueeze(1).expand(-1, 3, -1, -1)
+    x = torch.where(pick(0.15), g, x)
+    k = 5 if torch.rand(()).item() < 0.5 else 9
+    x = torch.where(pick(0.2), F.avg_pool2d(F.pad(x, (k // 2,) * 4, mode="reflect"), k, stride=1), x)
+    s = 56 if torch.rand(()).item() < 0.5 else 112
+    low = F.interpolate(F.interpolate(x, size=s, mode="bilinear", align_corners=False), size=h, mode="bilinear",
+                        align_corners=False)
+    x = torch.where(pick(0.15), low, x)
+    sig = torch.empty(b, 1, 1, 1, device=dev).uniform_(0.05, 0.3)
+    x = torch.where(pick(0.2), (x + sig * torch.randn_like(x)).clamp(-1, 1), x)
+    br = torch.empty(b, 1, 1, 1, device=dev).uniform_(-0.3, 0.3)
+    x = torch.where(pick(0.25), (x + br).clamp(-1, 1), x)
+    c = torch.empty(b, 1, 1, 1, device=dev).uniform_(0.6, 1.5)
+    m = x.mean(dim=(1, 2, 3), keepdim=True)
+    x = torch.where(pick(0.25), ((x - m) * c + m).clamp(-1, 1), x)
+    r0, c0 = (int(v) for v in torch.randint(0, h - 80, (2,)))
+    xc = x.clone()
+    xc[..., r0:r0 + 80, c0:c0 + 80] = 0.0
+    return torch.where(pick(0.15), xc, x)
 
 
 def proxy_retain(x: torch.Tensor) -> torch.Tensor:
