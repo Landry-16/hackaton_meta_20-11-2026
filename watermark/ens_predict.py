@@ -23,6 +23,8 @@ def main():
     ap.add_argument("--tta", action="store_true", help="seg_ext models: average with the mirrored image")
     ap.add_argument("--oof", action="store_true", help="instead of the test set: re-predict each held-out fold with its own model, "
                     "write oof_ext_<method>_fold<k>_<tag>_tta.npz (to judge --tta with compare_oof.py)")
+    ap.add_argument("--out-prefix", default="seg_probs_ens", help="output/<prefix>_<method>_test.npz (blend.py averages several)")
+    ap.add_argument("--scales", default="1", help="seg_ext models trained with --scales")
     ap.add_argument("--real-tag", default=None, help="seg_real checkpoint suffix (then methods come from seg_real)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
@@ -37,7 +39,8 @@ def main():
             from seg_ext import ExtSegmenter, predict as predict_ext
             from wmloc.watermarks import load_watermark
             ckpts = sorted(OUT.glob(f"segext_{m}_fold*_{a.tag}.pt"))
-            model = ExtSegmenter(m, load_watermark(m, device="cpu") if m != "stegastamp" else None, head=a.head).to(a.device)
+            model = ExtSegmenter(m, load_watermark(m, device="cpu") if m != "stegastamp" else None, head=a.head,
+                                 scales=tuple(float(v) for v in a.scales.split(","))).to(a.device)
             run = lambda: predict_ext(model, t_img[s], t_extra[s][:, -1:], a.device, tta=a.tta)
             if a.oof:
                 from rect_search import folds_of
@@ -57,8 +60,8 @@ def main():
             probs.append(run())
             print(f"{m}: {c.name} predicted", flush=True)
         avg = np.mean(probs, 0).astype(np.float16)
-        np.savez(OUT / f"seg_probs_ens_{m}_test.npz", names=np.array(t_names)[s], probs=avg)
-        print(f"{m}: averaged {len(probs)} models -> seg_probs_ens_{m}_test.npz", flush=True)
+        np.savez(OUT / f"{a.out_prefix}_{m}_test.npz", names=np.array(t_names)[s], probs=avg)
+        print(f"{m}: averaged {len(probs)} models -> {a.out_prefix}_{m}_test.npz", flush=True)
 
 
 if __name__ == "__main__":
