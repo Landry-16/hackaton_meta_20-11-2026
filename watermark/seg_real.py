@@ -159,14 +159,15 @@ def main():
     ap.add_argument("--save-methods", default=",".join(METHODS), help="with --fold all: methods whose test probabilities to write")
     ap.add_argument("--fast", action="store_true", help="float16 autocast with a gradient scaler + channels-last memory: +14 %% "
                     "images/s at batch 8, +65 %% at batch 32 on an A100 (bench_speed.py); same model, same loss")
+    ap.add_argument("--seed", type=int, default=0, help="another seed = another independent fit to average")
     ap.add_argument("--only", default="", help="train on ONE method (its real images, its synthetic set, its pseudo-labels): "
                     "3 times faster at equal volume; the other methods are still scored but mean nothing")
     ap.add_argument("--pseudo", default="", help="a submission file (output/submission_vN.pt): its masks become the labels of "
                     "the 1020 test images, added to every epoch (allowed by the organizers, 22 Nov 05:58)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
-    torch.manual_seed(0)
-    rng = np.random.default_rng(0)
+    torch.manual_seed(a.seed)
+    rng = np.random.default_rng(a.seed)
     print(f"device {a.device}, cuda available {torch.cuda.is_available()}", flush=True)
     images, masks, methods, extra, full, _names = load_split("train", a.limit)
     fold = folds_of(methods, full)
@@ -202,6 +203,8 @@ def main():
         print(f"+ {per_epoch['pseudo']} test images with the masks of {a.pseudo}", flush=True)
     if a.only:
         name += "_only" + a.only[:2]
+    if a.seed:
+        name += f"_s{a.seed}"
     if a.tag:
         name += "_" + a.tag
     steps = a.epochs * ((len(tr) + sum(per_epoch.values()) + a.batch - 1) // a.batch)
