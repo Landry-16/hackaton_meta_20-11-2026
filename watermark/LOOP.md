@@ -28,6 +28,21 @@ jrlogin01 and jrlogin12 did not. Heavy steps without GPU (ranker, post-processin
 5. Synthetic data never uses train masks of a held-out fold (recipe v3 uses random blobs).
 6. Every decision goes in the log below with its numbers.
 
+## Overfitting check (10:05, asked by Landry)
+- Public score up at each of the 10 submissions v10 to v19; it was never used to choose.
+- v13 models -> v19 models, raw OOF: gain in 15 of 15 (fold x method) cells, +0.047 +- 0.004 overall; PixelSeal
+  +0.012, TrustMark +0.038, StegaStamp +0.091; both image types gain in every method.
+- Warning sign: public minus CV shrank from +0.010 / +0.012 (v13 to v15) to +0.004 (v16 to v18) and +0.001 (v19);
+  since v13, 75 % of the CV gain shows on the public split (a random 30 % subset moves a gain by +-0.007, so the
+  shortfall of 0.011 is about 1.6 sd). Two causes, both real: (a) many means of variants were compared on the same
+  170 images per method and the best kept (selection optimism, a few thousandths per method); (b) CV scores single
+  fold models, the test uses means of 6 to 24 models, so variance-reducing changes (more data, more seeds) gain less
+  on the test than CV says.
+- Consequence, rules tightened until the end: (1) no more choosing between near-equal means; the mean of a method is
+  the equal-weight mean of every adopted variant, fixed in advance; (2) a new variant enters only with a clear
+  margin against the current mean (+0.005 and 2.5 SE) or as one more seed of an adopted model; (3) expect the hidden
+  70 % near the public level, not above the CV.
+
 ## One iteration
 1. State: `jureca/status.sh once`, results in `$TEAM_DIR/queue_lead/done/*.log`.
 1b. Speed check, every iteration, before waiting on anything: GPU load of the 4 cards (target above 80 % when
