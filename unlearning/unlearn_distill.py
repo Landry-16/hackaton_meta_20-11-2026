@@ -17,7 +17,7 @@ import torch.nn.functional as F
 
 from task_template import DEVICE, MODEL_FILE, load_forget_images, load_model, preprocess
 from ulib import (T, augment, class_wrong_dist, count_caps, difficulty_caps, fmt, kl_t, logits_views, mix_class_target,
-                  proxy_report, proxy_retain, soft_target)
+                  proxy_report, proxy_retain, reserve, soft_target)
 
 
 def parse():
@@ -74,6 +74,7 @@ def main():
     tag = f"{caps_tag}_tau{a.tau}" + (f"_ot{a.other_tau}" if a.other_tau != 1.0 else "") + f"_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_ep{a.epochs}_cf{a.clean_frac}" + ("_ext" if a.external else "") + (f"_init-{Path(a.init).stem}" if a.init else "") + (f"_s{a.seed}" if a.seed else "")
     out = Path(a.out + "_" + tag)
     out.parent.mkdir(parents=True, exist_ok=True)
+    reserve(f"{out}_e{ep}.pt" for ep in range(1, a.epochs + 1) if ep % a.save_every == 0 or ep == a.epochs)
 
     imgs = load_forget_images()
     if a.n:

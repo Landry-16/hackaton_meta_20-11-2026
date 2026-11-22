@@ -16,7 +16,7 @@ from pathlib import Path
 import torch
 
 from task_template import DEVICE, MODEL_FILE, build_model, load_forget_images
-from ulib import fmt, kl_t, logits_views, proxy_report
+from ulib import fmt, kl_t, logits_views, proxy_report, reserve
 
 
 def main():
@@ -31,6 +31,7 @@ def main():
     a = p.parse_args()
     torch.set_num_threads(a.threads)
 
+    reserve(f"{a.out}_s{s:g}.pt" for s in a.head_scales)
     w = a.weights or [1.0 / len(a.subs)] * len(a.subs)
     assert len(w) == len(a.subs) and abs(sum(w) - 1) < 1e-6, "weights must match the checkpoints and sum to 1"
     sds = [torch.load(s, map_location="cpu", weights_only=True) for s in a.subs]

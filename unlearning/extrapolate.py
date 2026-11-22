@@ -12,7 +12,7 @@ from pathlib import Path
 import torch
 
 from task_template import DEVICE, MODEL_FILE, build_model, load_forget_images
-from ulib import fmt, kl_t, logits_views, proxy_report
+from ulib import fmt, kl_t, logits_views, proxy_report, reserve
 
 
 def main():
@@ -25,6 +25,7 @@ def main():
     a = p.parse_args()
     torch.set_num_threads(a.threads)
 
+    reserve(a.sub.with_name(f"{a.sub.stem}_x{k:g}.pt") for k in a.ks)
     orig = torch.load(MODEL_FILE, map_location="cpu", weights_only=True)
     sub = torch.load(a.sub, map_location="cpu", weights_only=True)
     model = build_model().to(DEVICE).eval()  # run with CUDA_VISIBLE_DEVICES= to stay on CPU on a login node

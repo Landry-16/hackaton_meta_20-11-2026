@@ -52,6 +52,7 @@ def main():
     p.add_argument("--log", default="logs/submissions.csv")
     p.add_argument("--cooldown", type=int, default=365, help="seconds between two submissions")
     p.add_argument("--poll", type=int, default=30, help="seconds between queue checks when it is empty")
+    p.add_argument("--min-bytes", type=int, default=100_000_000, help="skip smaller files (empty reserved files)")
     p.add_argument("--lock", default="logs/submit_queue.lock",
                    help="single-instance lock: starting a new submitter makes any older one (any login node) exit")
     a = p.parse_args()
@@ -100,6 +101,12 @@ def main():
             with log.open("a", newline="") as f:
                 csv.writer(f).writerow([datetime.now().isoformat(timespec="seconds"), str(path), "rejected_missing",
                                         "", "", "file removed before submission"])
+            continue
+        if path.stat().st_size < a.min_bytes:  # reserved-but-never-written checkpoint (crashed run): never send it
+            print(f"{datetime.now():%H:%M:%S} {path.name} is only {path.stat().st_size} bytes, skipped", flush=True)
+            with log.open("a", newline="") as f:
+                csv.writer(f).writerow([datetime.now().isoformat(timespec="seconds"), str(path), "rejected_small",
+                                        "", "", f"{path.stat().st_size} bytes"])
             continue
         print(f"{datetime.now():%H:%M:%S} submitting {path.name} ({len(todo) - 1} more queued)", flush=True)
         try:

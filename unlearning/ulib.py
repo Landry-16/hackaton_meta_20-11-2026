@@ -3,6 +3,7 @@
 Everything here reuses task_template.py (model builder, server preprocessing) so we never drift from the official interface.
 """
 import math
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F
@@ -10,6 +11,16 @@ import torch.nn.functional as F
 from task_template import DEVICE, preprocess
 
 T = 2.0  # temperature used by the scorer for every KL
+
+
+def reserve(paths) -> None:
+    """Create the output files up front: overwriting an existing file needs no new inode, so a full
+    file system (inode quota) cannot make the final torch.save fail after a whole run."""
+    for p in paths:
+        p = Path(p)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if not p.exists():
+            p.touch()
 
 
 def augment(x: torch.Tensor, scale=(0.75, 1.0), max_rot_deg=10.0, jitter=0.1) -> torch.Tensor:
