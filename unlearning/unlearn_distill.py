@@ -15,7 +15,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from task_template import DEVICE, MODEL_FILE, load_forget_images, load_model, preprocess
+from task_template import DEVICE, MODEL_FILE, build_model, load_forget_images, load_model, preprocess
 from ulib import (T, augment, class_wrong_dist, count_caps, difficulty_caps, fmt, kl_t, logits_views, mix_class_target,
                   proxy_report, proxy_retain, reserve, soft_target)
 
@@ -54,6 +54,13 @@ def parse():
                    help="checkpoint used as teacher on the forget images only: target = softmax(forget_scale * M(x) / T),"
                         " no cap / other-tau / class-mix; the anchor term still distills the original model")
     p.add_argument("--forget-scale", type=float, default=1.0, help="logit scale applied to --forget-teacher")
+    p.add_argument("--forget-weight", type=float, default=1.0,
+                   help="weight of the forget term; 0 = anchor-only training, the forget images are never used")
+    p.add_argument("--reinit-blocks", type=int, default=0,
+                   help="re-initialise the last K transformer blocks with a freshly built model before training")
+    p.add_argument("--reinit-head", action="store_true", help="also re-initialise norm / fc_norm / head")
+    p.add_argument("--noise-std", type=float, default=0.0,
+                   help="before training, add Gaussian noise of S x each trainable tensor's own std")
     p.add_argument("--init", default=None, help="start the student from this checkpoint (e.g. an LFSSD output); "
                    "the teacher stays the original model")
     p.add_argument("--seed", type=int, default=0)
@@ -72,11 +79,16 @@ def trainable(model, k):
 
 def main():
     a = parse()
+    if a.forget_weight == 0 and not a.external:
+        raise SystemExit("--forget-weight 0 needs --external (anchor-only training)")
     torch.manual_seed(a.seed)
     caps_tag = f"cr{a.conf_min}-{a.conf_max}" if a.conf_min is not None else f"tc{a.target_conf}"
     caps_tag += ("_capcount" if a.cap_by == "count" else "") + ("_logcap" if a.cap_spacing == "log" else "") + (f"_cm{a.class_mix}" if a.class_mix else "")
     tag = f"{caps_tag}_tau{a.tau}" + (f"_ot{a.other_tau}" if a.other_tau != 1.0 else "") + f"_a{a.alpha}_k{a.train_blocks}_lr{a.lr}_ep{a.epochs}_cf{a.clean_frac}" + (("_ext" if Path(a.external).stem == "external_images" else f"_ext-{Path(a.external).stem}") if a.external else "") + (f"_init-{Path(a.init).stem}" if a.init else "")
     tag += f"_ft-{Path(a.forget_teacher).stem}_fs{a.forget_scale}" if a.forget_teacher else ""
+    tag += f"_fw{a.forget_weight}" if a.forget_weight != 1.0 else ""
+    tag += (f"_ri{a.reinit_blocks}" if a.reinit_blocks else "") + ("_rih" if a.reinit_head else "")
+    tag += f"_ns{a.noise_std}" if a.noise_std else ""
     tag += f"_s{a.seed}" if a.seed else ""
     out = Path(a.out + "_" + tag)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -97,7 +109,27 @@ def main():
         for p in fteacher.parameters():
             p.requires_grad = False
         print(f"forget teacher {a.forget_teacher} x {a.forget_scale} (forget targets only)")
+    if a.reinit_blocks or a.reinit_head:
+        fresh = build_model().to(DEVICE)
+        nb = len(student.blocks)
+        prefixes = [f"blocks.{i}." for i in range(nb - a.reinit_blocks, nb)]
+        prefixes += ["norm.", "fc_norm.", "head."] if a.reinit_head else []
+        fresh_sd = fresh.state_dict()
+        with torch.no_grad():
+            for n, t in student.state_dict().items():
+                if any(n.startswith(x) for x in prefixes):
+                    t.copy_(fresh_sd[n])
+        del fresh
+        if a.reinit_blocks > a.train_blocks:
+            print(f"WARNING: {a.reinit_blocks} blocks re-initialised but only {a.train_blocks} trained")
+        print(f"re-initialised: last {a.reinit_blocks} blocks" + (" + head" if a.reinit_head else ""))
     params = trainable(student, a.train_blocks)
+    if a.noise_std:
+        with torch.no_grad():
+            for p in params:
+                if p.numel() > 1:
+                    p.add_(torch.randn_like(p) * p.std() * a.noise_std)
+        print(f"noise {a.noise_std} x std added to {len(params)} trainable tensors")
     anchor = [p.detach().clone() for p in params]
     print(f"{tag}: {len(imgs)} images, {sum(p.numel() for p in params) / 1e6:.1f}M trainable params, device {DEVICE}")
 
@@ -133,6 +165,23 @@ def main():
         student.train()
         t0, tot = time.time(), [0.0, 0.0]
         for idx in torch.randperm(len(imgs)).split(a.bs):
+            if a.forget_weight == 0:  # anchor-only: never look at a forget image
+                xr = augment(preprocess(ext_train[torch.randint(len(ext_train), (len(idx),))]))
+                with torch.no_grad(), torch.autocast(**amp):
+                    zr = teacher(xr).float()
+                with torch.autocast(**amp):
+                    sr = student(xr).float()
+                lr_ = F.kl_div(F.log_softmax(sr / T, 1), F.softmax(zr / T, 1), reduction="batchmean")
+                loss = a.alpha * lr_
+                if a.l2sp:
+                    loss = loss + a.l2sp * sum(((p - p0) ** 2).sum() for p, p0 in zip(params, anchor))
+                opt.zero_grad(set_to_none=True)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(params, 1.0)
+                opt.step()
+                sched.step()
+                tot[1] += lr_.item() * len(idx)
+                continue
             x = preprocess(imgs[idx])
             keep = torch.rand(len(x), device=x.device) < a.clean_frac
             xf = torch.where(keep[:, None, None, None], x, augment(x))
@@ -156,7 +205,7 @@ def main():
                 target = mix_class_target(target, zf, class_avg[pseudo[idx]], a.class_mix)
             lf = F.kl_div(F.log_softmax(sf / T, 1), target, reduction="batchmean")
             lr_ = F.kl_div(F.log_softmax(sr / T, 1), F.softmax(zr / T, 1), reduction="batchmean")
-            loss = lf + a.alpha * lr_
+            loss = a.forget_weight * lf + a.alpha * lr_
             if a.l2sp:
                 loss = loss + a.l2sp * sum(((p - p0) ** 2).sum() for p, p0 in zip(params, anchor))
             opt.zero_grad(set_to_none=True)
