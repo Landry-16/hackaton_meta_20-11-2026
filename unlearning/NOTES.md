@@ -225,3 +225,14 @@ out/distill_tc0.5_tau1.0_a2.0_k4_lr0.0001_ep35_cf0.0_ext-anc_mix_init-M7b_ft-M7b
 - Flatter answers cost ~0.05, sharper ~0.01; altered copies show no anomaly (16 alterations); forget images are
   more robust to weight noise than validation images (not fragile memorised answers).
 - Team node outage 07:05-07:35 was technical (organizers); jrlogin03 sees /p/scratch, jrlogin01/12 do not.
+
+## Regression rule (22 Nov, 09:00, agreed by Mirado)
+Whenever a submitted model scores below its reference by more than 0.005 (10x the measured seed gap), check for an
+error BEFORE recording a conclusion:
+1. `python unlearning/tag_diff.py <reference.pt> <candidate.pt>`: exactly ONE difference, or the test is confounded
+   (example caught: the 0.4041 level-split run also had --clean-frac 0.5).
+2. The run log's first line `code <rev> | args {...}`: the arguments actually used match the intent, and no code
+   change between the reference's and the candidate's revision touches the training path (`git log <a>..<b> -- unlearning/`).
+3. Realised metrics match the requested ones (level mean/std, forget_kl converged, ext agreement plausible).
+4. File sane: ~344 MB, loads strict, float32, finite (proxy_metrics.py check_format).
+Only then mark the idea as rejected; otherwise write 'confounded / error' and re-run it cleanly if a slot allows.

@@ -80,6 +80,13 @@ def trainable(model, k):
 
 def main():
     a = parse()
+    try:  # audit trail: which code and which arguments produced this run (see the regression rule in NOTES.md)
+        import subprocess
+        rev = subprocess.run(["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, timeout=10).stdout.strip() or "unknown"
+    except Exception:
+        rev = "unknown"
+    print(f"code {rev} | args {vars(a)}", flush=True)
     if a.forget_weight == 0 and not a.external:
         raise SystemExit("--forget-weight 0 needs --external (anchor-only training)")
     torch.manual_seed(a.seed)
