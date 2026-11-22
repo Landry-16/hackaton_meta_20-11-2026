@@ -44,28 +44,30 @@ one job per GPU. Heavy steps without GPU (ranker, post-processing) run on the la
    row without advancing, start one independent reviewer agent (Fable, read-only, no GPU, no submission) with the
    log below and the per-type scores; its ranked proposals become the next candidates. Reset the counter.
 
-## Current best (nested CV, 22 Nov 06:15, submission v13 = public 0.7628)
+## Current best (nested CV, 22 Nov 07:00, submission v14 = public 0.7711)
 | Method | Model | OOF source | CV raw | CV post |
 |---|---|---|---|---|
-| PixelSeal | extractor head, trunk at scales 1 and 2, real + 2000 synth v3+v3b per epoch | `synthv3,synthv3b2000_ms1-2_long` | 0.6758 | 0.7005 |
-| TrustMark | mean of two heads (scales 1,2 / 4000 per epoch), flip-averaged | `blend_ms_l4k_tta` | 0.6648 | 0.7371 |
-| StegaStamp | ImageNet ResNet-34, real + 1000 synth v5 per method per epoch | `real_synthv5,synthv5b1000` | 0.7933 | 0.8169 |
-| Overall | | | 0.7113 | 0.7515 |
-Build: test probabilities with `ens_predict.py` (GPU queue; `--out-prefix` + `blend.py --test` for a mean of
-variants), then ON THE LAPTOP (the login node and shared compute nodes are 20 times slower for this step):
-`rsync` the OOF / test probability files into `watermark/output`, `seg_rank.py --source "$SRC" --apply`,
-`postproc.py --source "$SRC" --raw-methods pixelseal --seg --test-prefix seg_probs_ens --out submission_vN.pt --apply`,
-`rsync` the submission back and submit from the cluster.
+| PixelSeal | extractor head, trunk at scales 1 and 2, real + 2000 synth v3+v3b per epoch | `synthv3,synthv3b2000_ms1-2_long` | 0.6758 | 0.7011 |
+| TrustMark | mean of four heads (`ms` and `l4k` flip-averaged, `ms4k`, `l8k`) | `blend4` | 0.6721 | 0.7421 |
+| StegaStamp | ImageNet ResNet-34, real + 3000 synth v5 per method per epoch | `real_synthv5,synthv5b3000` | 0.8176 | 0.8345 |
+| Overall | | | 0.7218 | 0.7593 |
+How to build and submit now (login nodes have no /p/scratch since 06:35, compute nodes have no internet):
+1. everything on scratch goes through the team node: `jureca/node.sh '<commands>'`, `jureca/q.sh` (queue),
+   `rsync --rsync-path="$NODE_RSYNC"` after `source jureca/node.sh`;
+2. OOF and test probability files are pulled into `watermark/output` on the laptop; `seg_rank.py --source "$SRC"
+   --apply` then `postproc.py --source "$SRC" --raw-methods pixelseal --seg --test-prefix seg_probs_ens --out
+   submission_vN.pt --apply` run there (6 minutes);
+3. the file is copied to `~/sub/` on the login node and sent with `python3 ~/submit_login.py ~/sub/submission_vN.pt`
+   (`jureca/submit_login.py`, key from `HACK_API_KEY`).
 
-## Candidates queued or running (06:25, in priority order, one node)
-1. StegaStamp 3000 per method, fold 4 (the 4 other folds: +0.0195 +- 0.0083 against 1000).
-2. `pl13`: StegaStamp model + the 1020 test images labelled by submission v13, 5 folds + all.
-3. `onlyst`: ImageNet model trained on StegaStamp alone, 6000 v5 samples per epoch out of 24,000, 5 folds + all.
-4. `ms4k` PixelSeal (scales 1,2 and 4000 per epoch; the same change gave TrustMark +0.015), 5 folds + all.
-5. `pl13` PixelSeal (scales 1,2 + pseudo-labels), 5 folds.
-Dropped with the extra nodes: scales 1,2,3; 8000 per epoch; multi-method 6000; single-method TrustMark / PixelSeal.
-Ready, not yet submitted: TrustMark `blend4` (mean of 4 variants, +0.0073 +- 0.0019 over the current mean).
-Rejected: adding the ImageNet model to the PixelSeal / TrustMark heads (-0.019, -0.038).
+## Candidates queued or running (07:05)
+- `onlyst`: ImageNet model trained on StegaStamp alone, 6000 v5 samples per epoch out of 24,000: folds 0, 3, 4 at
+  0.867, 0.863, 0.869 (the multi-method model at 3000 is at 0.8176 overall). Folds 1, 2 and all running.
+- `onlyst` + pseudo-labels of v14 (`sopl`), `onlyst` at 12,000 per epoch (`so12`), the same single-method model for
+  TrustMark (`tmo`), 5 folds each.
+- PixelSeal: `ms4k` (scales 1,2 and 4000 per epoch) and scales 1,2 + pseudo-labels of v13, 5 folds, slow.
+- Adopted at equal volume, superseded by `onlyst`: StegaStamp pseudo-labels of v13 at 1000 per method
+  (+0.0128 +- 0.0048 against 1000 without them).
 
 ## Decisions of 05:15 to 05:45 (all on 5 folds, paired)
 | Method | Candidate against | Gain | Decision |
@@ -187,3 +189,4 @@ vs 0.659).
 | 8 | 05:00 | flip averaging on the saved fold models (TrustMark +0.0086 +- 0.0028 adopted, PixelSeal +0.0047 +- 0.0025 kept off); candidate ranker (type B: +0.032 over the best hand rule) | v11 = v10 + TrustMark flip averaging + ranker, submitted; v5 data generated (12,000 per method); 40 jobs queued; 2 more general nodes requested (7 in total) | 0.6991 | 0.7167 | 0 |
 | 9 | 05:40 | decisions table above | v12 = TrustMark mean of two variants + StegaStamp v5 + type A threshold, submitted | 0.7068 | 0.7311 | 0 |
 | 10 | 06:15 | PixelSeal scales 1,2 (+0.043), StegaStamp v5 at 1000 per method (+0.098) | v13 submitted. Organizers (05:58): any available data may be used, unlabeled test images included: pseudo-label runs queued (`--pseudo output/submission_v13.pt`). Their CV is slightly optimistic (the teacher saw the held-out labels), so the bar is +0.01 and the public score must move the same way | 0.7515 | 0.7628 | 0 |
+| 11 | 07:00 | StegaStamp 3000 per method (+0.0243 +- 0.0072), TrustMark mean of 4 (+0.0073 +- 0.0019) | v14 submitted. 06:23: the 6 extra nodes cancelled at an organizer's request (3 were reserved nodes, the reservation is magnetic); 06:28: 4 general-queue jobs resubmitted with the reserved nodes excluded, the first started at 06:55 on jrc0197 (checked: not reserved). 06:35: login nodes lost /p/scratch, tooling moved to the team node | 0.7593 | 0.7711 | 0 |
