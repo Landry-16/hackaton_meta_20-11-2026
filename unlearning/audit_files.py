@@ -47,6 +47,9 @@ def main():
     model = build_model().to(DEVICE).eval()
     seen = {}
     for f in a.files:
+        if not f.exists():
+            print(f"{f.name}\n  -> MISSING (deleted since submission), skipped", flush=True)
+            continue
         st = f.stat()
         line = f"{f.name}\n  size {st.st_size / 1e6:.0f} MB, modified {time.strftime('%H:%M:%S', time.localtime(st.st_mtime))}"
         if st.st_size < 1e8:
