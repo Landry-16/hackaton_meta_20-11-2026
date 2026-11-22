@@ -215,3 +215,13 @@ images; full set $TEAM_DIR/unlearning/external_gen.npz, 29,850 images, --holdout
   0.24 / 0.75 (= Imagenette), expected ~0.39-0.40.
 - Organizers: any external data allowed; one node per team (the reservation is magnetic; general-queue nodes need
   --exclude of the reserved nodes). Final ranking = best submission.
+
+## Rounds 26+ (22 Nov, 07:50)
+Best public **0.4118** = M7b wrong classes x1.6 (shape fixed) with the T=1 loss on the label set by an explicit term
+(Philibert's flags --wrong-scale 1.6 --level-weight 1 --loss-mean 4.85 --loss-std 2.95), mixed anchor, alpha 2, 35 ep:
+out/distill_tc0.5_tau1.0_a2.0_k4_lr0.0001_ep35_cf0.0_ext-anc_mix_init-M7b_ft-M7b_fs1.6_ws1.6_lm4.85-2.95_lw1.0_e35.pt
+- At fixed shape: loss 4.36 -> 0.3932, 4.68 (no level term) -> 0.4047, 4.93 -> 0.4118: about +0.03 per unit of mean
+  loss; the old --forget-scale series mixed level and sharpness. Higher levels (5.3 to 15) and std variants queued.
+- Flatter answers cost ~0.05, sharper ~0.01; altered copies show no anomaly (16 alterations); forget images are
+  more robust to weight noise than validation images (not fragile memorised answers).
+- Team node outage 07:05-07:35 was technical (organizers); jrlogin03 sees /p/scratch, jrlogin01/12 do not.
