@@ -36,16 +36,25 @@ One iteration = read results, decide, submit if earned, refill the GPUs, log. Ru
    row without advancing, start one independent reviewer agent (Fable, read-only, no GPU, no submission) with the
    log below and the per-type scores; its ranked proposals become the next candidates. Reset the counter.
 
-## Current best (nested CV, 22 Nov 04:35, submission v10 = public 0.6950)
-| Method | Model | OOF source | CV raw | CV post (rectangles + segment snapping) |
+## Current best (nested CV, 22 Nov 04:55, submission v11 = public 0.7167)
+| Method | Model | OOF source | CV raw | CV post (rectangles + segments) |
 |---|---|---|---|---|
-| PixelSeal | extractor head, real + 2000 synth v3+v3b per epoch, 60 epochs | `synthv3,synthv3b2000_long` | 0.6330 | 0.6496 (`voteb`) |
-| TrustMark | same | `synthv3,synthv3b2000_long` | 0.6284 | 0.7004 (`voteb`) |
-| StegaStamp | ImageNet ResNet-34, real + synth v3 | `real_synthv3300` | 0.6794 | 0.7062 (`greedy`) |
-| Overall | | | 0.6469 | 0.6854 |
-Build: `postproc.py --source "pixelseal=synthv3,synthv3b2000_long;trustmark=synthv3,synthv3b2000_long;stegastamp=real_synthv3300" --raw-methods pixelseal --seg --test-prefix seg_probs_ens --out submission_v10.pt --apply`
+| PixelSeal | extractor head, real + 2000 synth v3+v3b per epoch, 60 epochs | `synthv3,synthv3b2000_long` | 0.6330 | 0.6642 |
+| TrustMark | same, prediction averaged with the mirrored image | `synthv3,synthv3b2000_long_tta` | 0.6370 | 0.7200 |
+| StegaStamp | ImageNet ResNet-34, real + synth v3 | `real_synthv3300` | 0.6794 | 0.7133 |
+| Overall | | | 0.6498 | 0.6991 |
+Build (login node): `ens_predict.py --tag "synthv3,synthv3b2000_long" --methods trustmark --tta` (GPU), then with
+SRC = `pixelseal=synthv3,synthv3b2000_long;trustmark=synthv3,synthv3b2000_long_tta;stegastamp=real_synthv3300`:
+`seg_rank.py --source "$SRC" --apply` and
+`postproc.py --source "$SRC" --raw-methods pixelseal --seg --test-prefix seg_probs_ens --out submission_v11.pt --apply`
 
-## Candidates queued or running
+## Candidates queued or running (05:00)
+- `l4k`: 4000 synth per epoch out of v3+v3b+v3c (more volume again), 5 folds, against `long`.
+- `ms`: `long` with the trunk also at twice the resolution (`--scales 1,2`), 5 folds, against `long` (about 50 min).
+- `v5`: synthetic recipe v5 (object regions and a third of the holes are SAM segments of the image, as in the real
+  data) instead of v3: PixelSeal / TrustMark `synthv5,synthv5b2000_long`, StegaStamp `real_synthv5,synthv5b300`,
+  5 folds + fold all. `v35` = v3 + v5 pooled, adopted only if it beats `v5` itself under the rule.
+- Flip averaging for PixelSeal stays off (+0.0047 +- 0.0025, under the rule).
 
 ## Segment snapping (declared 04:20, BEFORE any result)
 Observation on 16 real train images: the object-shaped regions follow the object contours of the image itself (the
@@ -77,6 +86,17 @@ because the oracle leaves +0.27 on a quarter of the images, and one more variant
 protected only by the nested CV in `postproc.py` (option `seg` in off / greedy / voteb, chosen on 4 folds, scored on
 the 5th): overall 0.6749 -> 0.6854. The public score moved the same way (0.6743 -> 0.6950). No further hand-made
 selection rule will be tried on these OOFs; the next step is a LEARNED selector validated on the 5 folds.
+
+Learned selector (04:50): `seg_rank.py`, a small network that scores every candidate mask of a type B image (each
+SAM segment, the thresholded map, its largest component, its box, the two hand rules) from its agreement with the
+probability map, trained listwise, 5 seeds, fixed steps, on out-of-fold probabilities (the ranker of a fold never
+sees the images it is judged on). On the 254 true type B images: 0.6835 against 0.6516 (greedy) and 0.6181 (vote);
+the best candidate would give 0.79. Diagnostic behind it: in 73 % of the object images ONE segment matches the true
+mask (IoU above 0.8) and the map is right about where (mean probability 0.42 to 0.59 inside, 0.04 to 0.07 outside);
+the loss was in choosing the segment. Options in `postproc.py`: `seg` (type B) in off / greedy / voteb / rank,
+`segA` (type A) in off / greedy, chosen by nested CV.
+Not done, checked: accepted rectangles have no constant offset to correct (PixelSeal boxes 4 px inside the truth at
+the median, TrustMark centred, both with a 5 to 15 px spread); shrinking them lowers the score.
 
 ## Underfitting screen (synth-only gate, fold-free: trained on synthetic only, judged on all 170 real images)
 | Method | 600 per epoch, 40 epochs (reference) | 3000 per epoch `long` | `trunk3` | `big` | `bigtrunk3` |
@@ -130,3 +150,4 @@ vs 0.659).
 | 5 | 03:50 | message-aware heads, 5 folds (PixelSeal -0.002 +- 0.005, TrustMark +0.003 +- 0.005) | rejected; second 4 x A100 node from the general queue (allowed, outside the one-node limit); writes made robust to the inode quota; 9 underfitting screens running | 0.6691 | 0.6743 | 2: reviewer agent started, counter reset to 0 |
 | 6 | 04:00 | underfitting screens (table above) | volume is the fix: `long` and `big` queued on 5 folds + fold all (24 jobs); 3 more general-queue nodes requested (start estimated 04:45), 1 job per GPU; 106 rejected files deleted (inode quota at 2,600 free) | 0.6691 | 0.6743 | 0 |
 | 7 | 04:35 | `long` 5 folds: TrustMark +0.0235 +- 0.0062, PixelSeal +0.0146 +- 0.0067 (both adopted); `big` against `long`: -0.002 and -0.006 (rejected); SAM gate (table above) | v10 = `long` models + segment snapping, submitted | 0.6854 | 0.6950 | 0 |
+| 8 | 05:00 | flip averaging on the saved fold models (TrustMark +0.0086 +- 0.0028 adopted, PixelSeal +0.0047 +- 0.0025 kept off); candidate ranker (type B: +0.032 over the best hand rule) | v11 = v10 + TrustMark flip averaging + ranker, submitted; v5 data generated (12,000 per method); 40 jobs queued; 2 more general nodes requested (7 in total) | 0.6991 | 0.7167 | 0 |
