@@ -69,6 +69,17 @@ def loss_fn(logits, target):
     return F.binary_cross_entropy_with_logits(logits, target) + 1 - (iou / 2).mean()
 
 
+def retry(write, tries=40, wait=30):
+    """Run a file write again while the shared filesystem refuses it (inode quota of the whole hackathon)."""
+    for k in range(tries):
+        try:
+            return write()
+        except (OSError, RuntimeError) as e:
+            print(f"write refused ({type(e).__name__}: {str(e)[:60]}), retry {k + 1}/{tries} in {wait} s", flush=True)
+            time.sleep(wait)
+    return write()
+
+
 # ---------------------------------------------------------------- data
 def to_batch(images, device):
     return torch.from_numpy(np.ascontiguousarray(images)).to(device).permute(0, 3, 1, 2).float() / 255

@@ -45,25 +45,37 @@ One iteration = read results, decide, submit if earned, refill the GPUs, log. Ru
 | Overall | | | | 0.6691 |
 
 ## Candidates queued or running
-- `v3x`: PixelSeal and TrustMark extractor heads on real + synth v3 + v3b, 600 per epoch, 5 folds each
-  (OOF source `synthv3,synthv3b600`).
-- `msg`: message-aware heads (idea 1) on the same data, 5 folds each (OOF source `synthv3,synthv3b600_msg`).
-- `gen4`: synthetic recipe v4 (idea 2: COCO carriers, object-shaped holes, foreign content), 6000 per method;
-  then the synth-only gate against v3 (PixelSeal 0.609, TrustMark 0.591, StegaStamp 0.659 on all real images).
+- `msg`: message-aware heads (idea 1), 5 folds each (OOF source `synthv3,synthv3b600_msg`); partial result so far
+  PixelSeal +0.005 +- 0.007 on 2 folds, TrustMark +0.002 +- 0.006 on 4 folds.
+- `fit`: the training loss stays high (0.6 to 0.7): the models underfit the synthetic data. Screening on the
+  synth-only gate (all 170 real images judged, no real image trained on): 5 times more synthetic samples per epoch
+  (3000, batch 16), with and without a doubled learning rate; StegaStamp with 1500 per method. A winner is then
+  confirmed on 5 folds before adoption.
+
+## Where the points are lost (v9, post-processed OOF, share of the overall score lost)
+| Method | A holes (85) | B object (~41) | B rectangle (~44) |
+|---|---|---|---|
+| PixelSeal | 0.622, loses 0.063 | 0.683, loses 0.026 | 0.627, loses 0.031 (35 % found by decoding) |
+| TrustMark | 0.614, loses 0.064 | 0.620, loses 0.031 | 0.855, loses 0.013 (91 % found) |
+| StegaStamp | 0.731, loses 0.045 | 0.650, loses 0.028 | 0.660, loses 0.029 (0 % found) |
+Biggest items: holes of PixelSeal and TrustMark, then the rectangles that do not decode (PixelSeal, StegaStamp).
 
 ## Ideas not tried yet (take from the top)
 1. Message-aware input for the extractor heads: per-position agreement map between decoder logits and the known
    message (8x8, shift-and-stitch to 32x32) as extra input planes.
-2. Outside images (COCO val2017, read from the zip) as synthetic carriers, COCO object masks as hole and object shapes.
 3. Frozen extractor trunk + bigger head, 5 epochs, repeated real images (cheap, many seeds to average).
 4. StegaStamp: no-augmentation U-Net with a high-pass input branch and a full-resolution path.
 5. PixelSeal small / thin rectangles that do not decode (about 14 % of images).
 6. Pseudo-labels on confident test images (last resort, keep the previous submission as the safe one).
+7. One model per image type (holes / small area), routed by the full-image decode (Landry's idea).
 
 ## Dead ends (do not retry)
 Decoder-as-judge occlusion, keep-window decoding, re-embed correlation, TrustMark remover diff, WAM detector
 fine-tune, real-watermark copy-paste, blend of extractor and ImageNet models, more synth v2 volume, multi-scale
-trunk (+0.009, noise), StegaStamp extractor head, coarse rectangle search, bigger post-processing grids.
+trunk (+0.009, noise), StegaStamp extractor head, coarse rectangle search, bigger post-processing grids,
+synth v3 + v3b instead of v2 for PixelSeal / TrustMark (-0.002 and +0.004, noise), synthetic recipe v4 with COCO
+carriers and foreign content (synth-only gate: PixelSeal 0.577 vs 0.609, TrustMark 0.567 vs 0.591, StegaStamp 0.479
+vs 0.659).
 
 ## Log
 | Iter | Time | What finished | Decision | CV estimate | Public | Stall count |
@@ -72,3 +84,4 @@ trunk (+0.009, noise), StegaStamp extractor head, coarse rectangle search, bigge
 | 1 | 02:15 | nothing yet (v3x folds at epoch 20/60, PixelSeal test rectangles 20/81) | queue rebuilt: 3 jobs per GPU on 2-3, idle 0-1 borrowed; message-aware heads coded | 0.6691 | 0.6681 | 0 |
 | 2 | 02:38 | nothing yet (v3x folds 0-1 at epoch 42-53/60, PixelSeal test rectangles 50/81) | borrowed-GPU jobs were preempted after 23 min and lost: training now resumes from its last epoch; message bits of synth v3 recovered; 10 message-aware folds queued (`synthv3,synthv3b600_msg`) | 0.6691 | 0.6681 | 0 |
 | 3 | 03:00 | PixelSeal test rectangles (26 % of type B accepted) | applied (gain +0.020 +- 0.008 measured on train), v9 submitted; inode quota hit at 02:43 killed 15 jobs at start, requeued, watcher added; recipe v4 coded, generation queued | 0.6691 | 0.6743 | 0 |
+| 4 | 03:30 | v3x 5 folds (PixelSeal -0.002 +- 0.006, TrustMark +0.004 +- 0.005); v4 gate (worse on the 3 methods) | both rejected; all queues were pinned to ONE CPU core since the start: restarted with 64 cores, 6 times faster, GPUs at 95-100 %; underfitting screening queued | 0.6691 | 0.6743 | 1 |
