@@ -94,7 +94,7 @@ def main():
     a = ap.parse_args()
     if a.no_refine:
         GRID["refine"] = RAW_GRID["refine"] = [2.0]
-    sources = dict(kv.split("=") for kv in a.source.split(","))
+    sources = dict(kv.split("=") for kv in a.source.split(";" if ";" in a.source else ","))   # ";" when a source name holds a comma
     ds = LocalisationDataset("release", "train")
     gts = {m["image_name"]: ds.m128[m["image_name"]] for m in ds.meta}
     meta = {m["image_name"]: m for m in ds.meta}
