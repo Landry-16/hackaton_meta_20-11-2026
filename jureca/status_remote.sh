@@ -88,5 +88,21 @@ ls -t "$Q"/done/*.job 2>/dev/null | head -n 6 | while read -r j; do
   printf "    ${col}%-4s${N} %-13s %-40s ${D}%s${N}\n" "${rc:-?}" "$(grep '^OWNER=' "$j" | cut -d= -f2)" "$(what "$j" | cut -c1-40)" "$res"
 done
 echo
+LQ=/p/scratch/training2666/savarimuthu1/teambuilders/queue_lead
+echo "${B}Watermark queue${N} ${D}(Landry: GPUs 2-3, plus 0-1 while the team queue leaves them idle)${N}"
+echo "  ${G}running${N}"
+for j in "$LQ"/running/*.job; do [ -e "$j" ] || continue
+  n=$(basename "$j" .job)
+  printf "    %-6s %-58s ${D}%s${N}\n" "$(head -1 "$LQ/running/$n.log" 2>/dev/null | grep -oE 'GPU [0-9]+')" "$(what "$j" | cut -c1-58)" "$(lastline "$LQ/running/$n.log" | cut -c1-60)"
+done
+echo "  ${Y}waiting${N}: $(ls "$LQ"/pending/*.job 2>/dev/null | wc -l) jobs"
+echo "  ${D}finished (last 5)${N}"
+ls -t "$LQ"/done/*.job 2>/dev/null | head -n 5 | while read -r j; do
+  n=$(basename "$j" .job); l="$LQ/done/$n.log"
+  rc=$(grep -oE 'exit code [0-9]+' "$l" 2>/dev/null | tail -1 | grep -oE '[0-9]+$')
+  [ "${rc:-x}" = 0 ] && col=$G || col=$R
+  printf "    ${col}%-3s${N} %-58s ${D}%s${N}\n" "${rc:-?}" "$(what "$j" | cut -c1-58)" "$(grep -E 'held-out|wrote|measured|Traceback|Error' "$l" 2>/dev/null | tail -1 | cut -c1-60)"
+done
+echo
 echo "${D}scratch inodes (whole hackathon): $(df --output=iused,iavail /p/scratch/training2666 | tail -1 | awk '{printf "%d used, %d free", $1, $2}')${N}"
 echo "${D}full log of a job: bash jureca/gpu_submit.sh log <name>   (names: ls $Q/running $Q/pending)${N}"
