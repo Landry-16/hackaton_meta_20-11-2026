@@ -10,8 +10,9 @@
 #
 # A second whole GPU node from the GENERAL queue (no reservation): the organizers allow it, it does not count for the
 # one-node-per-team limit of the cispahack reservation. It may wait in the general queue before starting.
-# Organizers: ONE node per person at a time (pending jobs count). Never submit a second job while this one exists.
-#   sbatch -J hold jureca/hold.sh       then jureca/run.sh uses it automatically while it runs.
+# The one-job-per-team rule applies to the cispahack reservation only (jureca/hold.sh): several of these may run.
+# Do not leave one idle: it spends the shared project budget. Start a queue on it (see jureca/gpu_queue.sh).
+#   sbatch -J hold2 --time=07:00:00 jureca/hold_general.sh
 # Release it when done:  scancel <jobid>
 echo "holding $(hostname) since $(date -Is)"
 sleep infinity
