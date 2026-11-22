@@ -7,7 +7,7 @@
 #   bash jureca/gpu_submit.sh cancel <name>   remove a pending job
 # The command runs as Landry's account on a free GPU (CUDA_VISIBLE_DEVICES is set for you), with NO internet:
 # download weights / packages on the login node first. Write outputs inside $TEAM_DIR.
-Q="${TEAM_DIR:?set TEAM_DIR in ~/.bashrc (jureca/SETUP.md)}/queue"
+Q="${QUEUE_DIR:-${TEAM_DIR:?set TEAM_DIR in ~/.bashrc (jureca/SETUP.md)}/queue}"
 case "${1:-}" in
   ""|-h|--help) sed -n '2,10p' "$0"; exit 0 ;;
   status)

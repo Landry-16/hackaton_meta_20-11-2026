@@ -8,7 +8,7 @@
 #   start (lead, from the login node, in the repo clone):
 #     setsid nohup srun --jobid=<hold id> --overlap --ntasks=1 bash jureca/gpu_queue.sh > /dev/null 2>&1 < /dev/null &
 #   GPUs the queue may use: $TEAM_DIR/queue/gpus (default "0 1 2 3"). Submit with jureca/gpu_submit.sh.
-Q="${TEAM_DIR:?set TEAM_DIR}/queue"
+Q="${QUEUE_DIR:-${TEAM_DIR:?set TEAM_DIR}/queue}"     # QUEUE_DIR: a second queue (the lead runs his own on his GPUs)
 LEAD="${QUEUE_LEAD:-savarimuthu1}"
 SLOTS="${SLOTS:-3}"
 MEM_CAP="${MEM_CAP:-28000}"
