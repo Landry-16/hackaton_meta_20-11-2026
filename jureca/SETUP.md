@@ -92,3 +92,4 @@ bash jureca/gpu_submit.sh status
 bash jureca/gpu_submit.sh log <name>
 ```
 The command runs on Landry's account, no internet (download on the login node first), outputs inside `$TEAM_DIR`. Never `sbatch` / `salloc` yourself.
+- **`srun` steps get ONE CPU core unless you ask**: always `srun --overlap --ntasks=1 --cpus-per-task=64 ...` inside the hold job. Without it every job of the step shares one core and the GPUs idle at 20 %. Check with `nvidia-smi` and `ps -o %cpu`.

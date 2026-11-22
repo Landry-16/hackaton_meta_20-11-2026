@@ -20,6 +20,11 @@ One iteration = read results, decide, submit if earned, refill the GPUs, log. Ru
 
 ## One iteration
 1. State: `jureca/status.sh once`, results in `$TEAM_DIR/queue_lead/done/*.log`.
+1b. Speed check, every iteration, before waiting on anything: GPU load of the 4 cards (target above 80 % when
+   jobs are queued), CPU share of the running processes (`ps -o %cpu`, they must not share one core: queue steps
+   need `--cpus-per-task`), seconds per epoch against the last iteration, jobs dying at start (inode quota). A
+   bottleneck is fixed first; it is worth more than any experiment (22 Nov 03:07: all jobs were pinned to one CPU
+   core, fixing it made training 6 times faster).
 2. For each finished candidate: `compare_oof.py --method M --a <current best> --b <candidate>` on the login node.
    ADOPT: update the table below, train `--fold all`, average the 6 models (`ens_predict.py`), then
    `postproc.py --apply`. KEEP: write why in the log.
