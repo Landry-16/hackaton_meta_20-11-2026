@@ -13,10 +13,10 @@ or account/partition combination"), a technical issue on the organizers' side. L
 jrlogin01 and jrlogin12 did not. Heavy steps without GPU (ranker, post-processing) run on the laptop.
 
 ## Stop
-- public score at or above 0.72 (top 5 level on 22 Nov, 01:00), or
-- Sunday 22 Nov 11:00 Paris time: stop experiments, check that the best validated submission is the one on the board
-  (submissions close at 12:00), or
-- Landry says stop.
+- Sunday 22 Nov 10:45 Paris time: stop launching experiments, check that the best validated submission is the one
+  on the board (submissions close at 12:00), or Landry says stop.
+- Do NOT release the nodes (no `scancel`) until Landry says so (his instruction, 07:45). Their own time limits end
+  them anyway: general-queue nodes at 11:46, the team node at 12:05.
 
 ## Anti-overfitting rules (never bend them)
 1. A variant is adopted only on the 5 folds of the method (170 images), with `compare_oof.py`: paired gain above
