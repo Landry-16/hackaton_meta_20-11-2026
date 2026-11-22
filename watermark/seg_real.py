@@ -157,14 +157,17 @@ def main():
     ap.add_argument("--tag", default="", help="appended to the run name")
     ap.add_argument("--no-flip", action="store_true", help="no flip augmentation or TTA (StegaStamp decoding dies under flips)")
     ap.add_argument("--save-methods", default=",".join(METHODS), help="with --fold all: methods whose test probabilities to write")
+    ap.add_argument("--fast", action="store_true", help="float16 autocast with a gradient scaler + channels-last memory: +14 %% "
+                    "images/s at batch 8, +65 %% at batch 32 on an A100 (bench_speed.py); same model, same loss")
+    ap.add_argument("--seed", type=int, default=0, help="another seed = another independent fit to average")
     ap.add_argument("--only", default="", help="train on ONE method (its real images, its synthetic set, its pseudo-labels): "
                     "3 times faster at equal volume; the other methods are still scored but mean nothing")
     ap.add_argument("--pseudo", default="", help="a submission file (output/submission_vN.pt): its masks become the labels of "
                     "the 1020 test images, added to every epoch (allowed by the organizers, 22 Nov 05:58)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
-    torch.manual_seed(0)
-    rng = np.random.default_rng(0)
+    torch.manual_seed(a.seed)
+    rng = np.random.default_rng(a.seed)
     print(f"device {a.device}, cuda available {torch.cuda.is_available()}", flush=True)
     images, masks, methods, extra, full, _names = load_split("train", a.limit)
     fold = folds_of(methods, full)
@@ -178,6 +181,10 @@ def main():
     print(f"{name}: train {len(tr)} real images, judged on {len(ev)}", flush=True)
 
     model = RealSegmenter(pretrained=not a.limit).to(a.device)
+    amp_dtype = torch.float16 if a.fast else torch.bfloat16
+    scaler = torch.amp.GradScaler("cuda", enabled=a.fast and a.device == "cuda")
+    if a.fast:
+        model = model.to(memory_format=torch.channels_last)
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4)
     synth = {}
     if a.synth:
@@ -196,6 +203,8 @@ def main():
         print(f"+ {per_epoch['pseudo']} test images with the masks of {a.pseudo}", flush=True)
     if a.only:
         name += "_only" + a.only[:2]
+    if a.seed:
+        name += f"_s{a.seed}"
     if a.tag:
         name += "_" + a.tag
     steps = a.epochs * ((len(tr) + sum(per_epoch.values()) + a.batch - 1) // a.batch)
@@ -218,11 +227,14 @@ def main():
                 x, y = x.flip(-1), y.flip(-1)
             if not a.no_flip and rng.random() < 0.5:
                 x, y = x.flip(-2), y.flip(-2)
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=a.device == "cuda"):
+            if a.fast:
+                x = x.contiguous(memory_format=torch.channels_last)
+            with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=a.device == "cuda"):
                 loss = loss_fn(model(x, e).float(), y)
             opt.zero_grad(set_to_none=True)
-            loss.backward()
-            opt.step()
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
             sched.step()
             losses.append(loss.item())
         if a.fold != "all" and (epoch % 4 == 0 or epoch == a.epochs):

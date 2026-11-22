@@ -41,7 +41,7 @@ def stegastamp_trunk():
 
 class ExtractorTrunk(nn.Module):
     """Multi-scale features (strides 4, 8, 16, 32) of the watermark extractor, input in [0, 1]."""
-    def __init__(self, method, wm):
+    def __init__(self, method, wm, dil=False):
         super().__init__()
         self.method = method
         if method == "pixelseal":
@@ -50,8 +50,26 @@ class ExtractorTrunk(nn.Module):
             self.rn = wm.net
         else:
             self.ss = stegastamp_trunk()
+        if dil:
+            self.dilate()
         with torch.no_grad():
             self.channels = [f.shape[1] for f in self.forward(torch.zeros(1, 3, RES[method], RES[method]))]
+
+    def dilate(self):
+        """Last stage without its stride, its convolutions dilated by 2: the SAME pretrained network evaluated on a
+        grid twice as fine (at even positions the features are exactly the original ones). The deepest features are
+        the ones that know the watermark; this doubles their resolution without rescaling the image (Nathan's idea)."""
+        if self.method == "pixelseal":
+            down = self.cn.downsample_layers[3]
+            down[1].stride = (1, 1)
+            self.cn.downsample_layers[3] = nn.Sequential(down[0], nn.ReplicationPad2d((0, 1, 0, 1)), down[1])
+            for block in self.cn.stages[3]:
+                block.dwconv.dilation, block.dwconv.padding = (2, 2), (6, 6)
+        elif self.method == "trustmark":
+            first = self.rn.layer4[0]
+            first.conv2.stride, first.downsample[0].stride = (1, 1), (1, 1)
+            for block in list(self.rn.layer4)[1:]:
+                block.conv2.dilation, block.conv2.padding = (2, 2), (2, 2)
 
     def forward(self, x):
         if self.method == "stegastamp":                           # WAVES ONNX graph: NHWC in [0, 1], secret unused
@@ -77,11 +95,11 @@ class ExtSegmenter(nn.Module):
     msg: message-aware. `extra` then also carries the message signs (B x (1 + nbits)); a FROZEN copy of the extractor
     gives its per-position bit logits (8 x 8), and their agreement with the known message becomes three input planes
     (local agreement, its image mean, PixelSeal detection channel): where the decoder locally reads the right bits."""
-    def __init__(self, method, wm, extra=1, scales=(1,), msg=False, head="small"):
+    def __init__(self, method, wm, extra=1, scales=(1,), msg=False, head="small", dil=False):
         super().__init__()
         self.method, self.msg = method, msg
         self.sizes = [int(RES[method] * s) for s in scales]
-        self.trunk = ExtractorTrunk(method, wm)
+        self.trunk = ExtractorTrunk(method, wm, dil=dil)
         if msg:
             self.frozen = copy.deepcopy(self.trunk)
             self.bit_head = copy.deepcopy(wm.det.pixel_decoder if method == "pixelseal" else wm.net.fc)
@@ -202,11 +220,13 @@ def main():
     ap.add_argument("--no-real", action="store_true", help="train on synthetic samples only (transfer gate), judge on ALL real images")
     ap.add_argument("--scales", default="1", help="e.g. 1,2: the trunk also sees the image at twice its working resolution")
     ap.add_argument("--copypaste", type=int, default=0, help="real-watermark copy-paste samples per epoch (training fold donors only)")
+    ap.add_argument("--dil", action="store_true", help="dilated last trunk stage: deepest features on a grid twice as fine")
+    ap.add_argument("--seed", type=int, default=0, help="another seed = another independent fit to average")
     ap.add_argument("--pseudo", default="", help="a submission file: its masks label the test images of the method, added to every epoch")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
-    torch.manual_seed(0)
-    rng = np.random.default_rng(0)
+    torch.manual_seed(a.seed)
+    rng = np.random.default_rng(a.seed)
     from wmloc.watermarks import load_watermark
     print(f"device {a.device}, cuda available {torch.cuda.is_available()}", flush=True)
     images, masks, methods, extra, full, names = load_split("train", a.limit)
@@ -224,7 +244,7 @@ def main():
     print(f"{name}: train {len(tr)} real images, judged on {len(ev)}", flush=True)
 
     wm = load_watermark(a.method, device="cpu") if a.method != "stegastamp" else None
-    model = ExtSegmenter(a.method, wm, scales=tuple(float(v) for v in a.scales.split(",")), msg=a.msg, head=a.head).to(a.device)
+    model = ExtSegmenter(a.method, wm, scales=tuple(float(v) for v in a.scales.split(",")), msg=a.msg, head=a.head, dil=a.dil).to(a.device)
     trunk = list(model.trunk.parameters())
     rest = [p for n, p in model.named_parameters() if not n.startswith("trunk.") and p.requires_grad]
     opt = torch.optim.AdamW([{"params": trunk, "lr": a.lr / a.trunk_div}, {"params": rest, "lr": a.lr}], weight_decay=1e-4)
@@ -250,6 +270,10 @@ def main():
         name += "_msg"
     if a.scales != "1":
         name += "_ms" + a.scales.replace(",", "-").replace(".", "p")
+    if a.dil:
+        name += "_dil"
+    if a.seed:
+        name += f"_s{a.seed}"
     if a.tag:
         name += "_" + a.tag
     history, t0, probs = [], time.time(), None
