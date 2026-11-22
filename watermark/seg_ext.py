@@ -170,13 +170,17 @@ class CopyPaste:
 
 
 @torch.no_grad()
-def predict(model, images, extra, device, batch=16):
+def predict(model, images, extra, device, batch=16, tta=False):
+    """tta: average with the prediction of the mirrored image (PixelSeal / TrustMark decoding survives a flip)."""
     model.eval()
     out = []
     for i in range(0, len(images), batch):
         x, e = batch_x(images[i:i + batch], device), torch.from_numpy(extra[i:i + batch]).to(device)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=device == "cuda"):
-            out.append(torch.sigmoid(model(x, e).float()).cpu().numpy())
+            p = torch.sigmoid(model(x, e).float())
+            if tta:
+                p = (p + torch.sigmoid(model(x.flip(-1), e).float()).flip(-1)) / 2
+        out.append(p.cpu().numpy())
     return np.concatenate(out)
 
 
