@@ -45,11 +45,27 @@ One iteration = read results, decide, submit if earned, refill the GPUs, log. Ru
 | Overall | | | | 0.6691 |
 
 ## Candidates queued or running
-- `fit2`: the training loss stays high (0.6 to 0.7): the models underfit. Screening on the synth-only gate (all
-  170 real images judged, none trained on), 3000 synth v3+v3b samples per epoch, 40 epochs, batch 16: tags `long`
-  (nothing else changed), `trunk3` (trunk lr / 3), `big` (5-layer head), `bigtrunk3`; StegaStamp `lr1e3`.
-  A winner is confirmed on 5 folds before adoption.
+- `long` (the candidate): extractor head, real + 2000 synth v3+v3b per epoch, 60 epochs, batch 16 (5 times more
+  synthetic samples than the current best, same number of passes over the real images). 5 folds + fold all, both
+  methods. Decision: `compare_oof.py --a synthv2400 --b "synthv3,synthv3b2000_long"`.
+- `big`: the same with the 5-layer head. Two candidates against one baseline inflate the test, so `big` is adopted
+  only if it beats `long` itself under the rule (`--a "synthv3,synthv3b2000_long" --b "synthv3,synthv3b2000_big"`).
 - Reviewer agent (Fable, read-only) started at 03:50 on the stall: underfitting causes, holes, undecodable rectangles.
+
+## Underfitting screen (synth-only gate, fold-free: trained on synthetic only, judged on all 170 real images)
+| Method | 600 per epoch, 40 epochs (reference) | 3000 per epoch `long` | `trunk3` | `big` | `bigtrunk3` |
+|---|---|---|---|---|---|
+| TrustMark | 0.591 | 0.624 | 0.622 | 0.626 | 0.619 |
+| PixelSeal | 0.609 | 0.616 at epoch 20 of 40 | 0.601 at 20 | 0.630 at 25 | 0.594 at 15 |
+| StegaStamp (ImageNet model) | 0.659 at 300 per method | 0.666 at 1500 | | | 0.654 with lr 1e-3 |
+More synthetic volume fixes most of the underfitting of the extractor heads (TrustMark +0.033 on the gate, above
+its current CV with real images). The head size and the trunk learning rate change nothing clear. StegaStamp does
+not react to volume (+0.007, noise).
+
+Speed (measured 03:55): one job alone on an A100 does 220 (PixelSeal) to 350 (TrustMark) samples per second and
+loads the card at 93 %; batch 48, the cudnn autotuner and channels-last memory change nothing; three jobs on one
+card each run three times slower. The card is the limit, so the only lever is the number of cards: new nodes run
+ONE job per GPU.
 
 ## Where the points are lost (v9, post-processed OOF, share of the overall score lost)
 | Method | A holes (85) | B object (~41) | B rectangle (~44) |
@@ -86,3 +102,4 @@ vs 0.659).
 | 3 | 03:00 | PixelSeal test rectangles (26 % of type B accepted) | applied (gain +0.020 +- 0.008 measured on train), v9 submitted; inode quota hit at 02:43 killed 15 jobs at start, requeued, watcher added; recipe v4 coded, generation queued | 0.6691 | 0.6743 | 0 |
 | 4 | 03:30 | v3x 5 folds (PixelSeal -0.002 +- 0.006, TrustMark +0.004 +- 0.005); v4 gate (worse on the 3 methods) | both rejected; all queues were pinned to ONE CPU core since the start: restarted with 64 cores, 6 times faster, GPUs at 95-100 %; underfitting screening queued | 0.6691 | 0.6743 | 1 |
 | 5 | 03:50 | message-aware heads, 5 folds (PixelSeal -0.002 +- 0.005, TrustMark +0.003 +- 0.005) | rejected; second 4 x A100 node from the general queue (allowed, outside the one-node limit); writes made robust to the inode quota; 9 underfitting screens running | 0.6691 | 0.6743 | 2: reviewer agent started, counter reset to 0 |
+| 6 | 04:00 | underfitting screens (table above) | volume is the fix: `long` and `big` queued on 5 folds + fold all (24 jobs); 3 more general-queue nodes requested (start estimated 04:45), 1 job per GPU; 106 rejected files deleted (inode quota at 2,600 free) | 0.6691 | 0.6743 | 0 |

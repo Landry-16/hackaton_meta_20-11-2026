@@ -19,6 +19,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--methods", default="pixelseal,trustmark")
     ap.add_argument("--tag", default="synthv2400", help="seg_ext checkpoint suffix")
+    ap.add_argument("--head", default="small", choices=["small", "big"], help="seg_ext head the checkpoints were trained with")
     ap.add_argument("--real-tag", default=None, help="seg_real checkpoint suffix (then methods come from seg_real)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
@@ -33,7 +34,7 @@ def main():
             from seg_ext import ExtSegmenter, predict as predict_ext
             from wmloc.watermarks import load_watermark
             ckpts = sorted(OUT.glob(f"segext_{m}_fold*_{a.tag}.pt"))
-            model = ExtSegmenter(m, load_watermark(m, device="cpu") if m != "stegastamp" else None).to(a.device)
+            model = ExtSegmenter(m, load_watermark(m, device="cpu") if m != "stegastamp" else None, head=a.head).to(a.device)
             run = lambda: predict_ext(model, t_img[s], t_extra[s][:, -1:], a.device)
         probs = []
         for c in ckpts:
