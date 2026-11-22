@@ -25,10 +25,11 @@ OUT = Path("output")
 GRID = {"thr": [0.4, 0.5, 0.6], "lcc": [False, True], "snap": [0.8, 1.01], "floor": [0.03],
         "refine": [0.8, 2.0],                # accept the exhaustive-search rectangle above this bit accuracy; 2.0 = never
         "rect": [False],                     # old coarse rect_search override, superseded by global_rect.py
-        "seg": ["off", "greedy", "voteb"]}   # snap onto SAM object segments (sam_snap.py); voteb = vote, type B only
+        "seg": ["off", "greedy", "voteb", "rank"],   # type B images, SAM object segments: sam_snap.py rules or the
+        "segA": ["off", "greedy"]}                   # learned candidate ranker of seg_rank.py; segA: type A images
 RAW_GRID = {"thr": [0.5], "lcc": [False], "snap": [1.01], "floor": [0.0], "refine": [0.8, 2.0], "rect": [False],
-            "seg": ["off", "greedy", "voteb"]}
-SEGS, _SEG_CACHE = {}, {}                    # image name -> K x 128 x 128 segments; (name, rule, thr) -> snapped mask
+            "seg": ["off", "greedy", "voteb", "rank"], "segA": ["off", "greedy"]}
+SEGS, RANKED, _SEG_CACHE = {}, {}, {}        # name -> K x 128 x 128 segments; name -> ranker mask; (name, rule, thr) -> mask
 
 
 def snapped(name, p, typeb, rule, thr):
@@ -36,6 +37,9 @@ def snapped(name, p, typeb, rule, thr):
     if key not in _SEG_CACHE:
         from sam_snap import greedy, vote
         start = (p >= thr).astype(np.uint8)
+        if rule == "rank":
+            _SEG_CACHE[key] = RANKED[name] if typeb and name in RANKED else start
+            return _SEG_CACHE[key].copy()
         _SEG_CACHE[key] = greedy(p, SEGS[name], start=start) if rule == "greedy" else vote(p, SEGS[name]) if typeb else start
     return _SEG_CACHE[key].copy()
 
@@ -57,8 +61,9 @@ def post(p, typeb, rect_box, prm, refined=None, name=None):
     if rect_box is not None and prm.get("rect", True):
         return box_mask(rect_box)
     m = (p >= prm["thr"]).astype(np.uint8)
-    if prm.get("seg", "off") != "off" and name in SEGS:
-        m = snapped(name, p, typeb, prm["seg"], prm["thr"])
+    rule = prm.get("seg", "off") if typeb else prm.get("segA", "off")
+    if rule != "off" and name in SEGS:
+        m = snapped(name, p, typeb, rule, prm["thr"])
     if typeb and prm["lcc"] and m.any():
         lab, n = ndimage.label(m)
         if n > 1:
@@ -113,8 +118,11 @@ def main():
         if a.apply:
             SEGS.update(load_segments("test"))
             assert len(SEGS) == 1530, f"segments of {len(SEGS)} images only"
+        for f in [OUT / "rank_train.npz"] + ([OUT / "rank_test.npz"] if a.apply else []):   # seg_rank.py
+            z = np.load(f)
+            RANKED.update(zip(z["names"].tolist(), np.unpackbits(z["masks"], axis=1).reshape(-1, 128, 128)))
     else:
-        GRID["seg"] = RAW_GRID["seg"] = ["off"]
+        GRID["seg"] = RAW_GRID["seg"] = GRID["segA"] = RAW_GRID["segA"] = ["off"]
     if a.no_refine:
         GRID["refine"] = RAW_GRID["refine"] = [2.0]
     sources = dict(kv.split("=") for kv in a.source.split(";" if ";" in a.source else ","))   # ";" when a source name holds a comma
