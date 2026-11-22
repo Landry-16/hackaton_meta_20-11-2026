@@ -16,7 +16,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from rect_search import folds_of
-from seg_real import load_synth, batch_x, load_split, plots, report
+from seg_real import load_synth, batch_x, load_split, plots, pseudo_set, report
 from seg_train import loss_fn, retry
 from wmloc.data import LocalisationDataset
 
@@ -202,6 +202,7 @@ def main():
     ap.add_argument("--no-real", action="store_true", help="train on synthetic samples only (transfer gate), judge on ALL real images")
     ap.add_argument("--scales", default="1", help="e.g. 1,2: the trunk also sees the image at twice its working resolution")
     ap.add_argument("--copypaste", type=int, default=0, help="real-watermark copy-paste samples per epoch (training fold donors only)")
+    ap.add_argument("--pseudo", default="", help="a submission file: its masks label the test images of the method, added to every epoch")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
     torch.manual_seed(0)
@@ -227,7 +228,12 @@ def main():
     trunk = list(model.trunk.parameters())
     rest = [p for n, p in model.named_parameters() if not n.startswith("trunk.") and p.requires_grad]
     opt = torch.optim.AdamW([{"params": trunk, "lr": a.lr / a.trunk_div}, {"params": rest, "lr": a.lr}], weight_decay=1e-4)
-    steps = a.epochs * ((len(tr) + a.synth + a.copypaste + a.batch - 1) // a.batch)
+    ps = None
+    if a.pseudo:
+        p_img, p_mask, p_extra = pseudo_set(a.pseudo, a.method)
+        ps = (p_img, p_mask, p_extra[:, -1:])
+        print(f"+ {len(p_img)} test images with the masks of {a.pseudo}", flush=True)
+    steps = a.epochs * ((len(tr) + a.synth + a.copypaste + (len(ps[0]) if ps else 0) + a.batch - 1) // a.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=[a.lr / a.trunk_div, a.lr], total_steps=steps, pct_start=0.1)
     if a.synth:
         z = load_synth(a.synth_set, a.method)
@@ -261,6 +267,8 @@ def main():
             order += [("synth", i) for i in rng.choice(len(s_img), a.synth, replace=False)]
         if a.copypaste:
             order += [("cp", i) for i in range(a.copypaste)]
+        if ps:
+            order += [("pseudo", i) for i in range(len(ps[0]))]
         order = [order[k] for k in rng.permutation(len(order))]
         losses = []
         for i in range(0, len(order), a.batch):
@@ -269,7 +277,7 @@ def main():
             def pick(real, syn, field):
                 out = []
                 for k, (src, j) in enumerate(chunk):
-                    out.append(real[j] if src == "real" else syn[j] if src == "synth" else gen[k][field])
+                    out.append(real[j] if src == "real" else syn[j] if src == "synth" else ps[field][j] if src == "pseudo" else gen[k][field])
                 return np.stack(out)
             x = batch_x(pick(images, s_img if a.synth else None, 0), a.device)
             y = torch.from_numpy(pick(masks, s_mask if a.synth else None, 1)).float().to(a.device)

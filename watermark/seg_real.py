@@ -72,6 +72,15 @@ def load_split(split, limit=0):
     return images, masks, methods, extra, full, [it["image_name"] for it in items]
 
 
+def pseudo_set(path, method=None):
+    """Test images labelled with the masks of a submission file: (images, masks 128, extra), one method or all."""
+    sub = torch.load(path, weights_only=False)
+    mask = dict(zip(sub["image_names"], sub["masks"].numpy().astype(np.uint8)))
+    t_img, _, t_methods, t_extra, _, t_names = load_split("test")
+    sel = np.flatnonzero(t_methods == method) if method else np.arange(len(t_names))
+    return t_img[sel], np.stack([mask[t_names[i]] for i in sel]), t_extra[sel]
+
+
 def batch_x(images, device):
     return torch.from_numpy(np.ascontiguousarray(images)).to(device).permute(0, 3, 1, 2).float() / 255
 
@@ -148,6 +157,8 @@ def main():
     ap.add_argument("--tag", default="", help="appended to the run name")
     ap.add_argument("--no-flip", action="store_true", help="no flip augmentation or TTA (StegaStamp decoding dies under flips)")
     ap.add_argument("--save-methods", default=",".join(METHODS), help="with --fold all: methods whose test probabilities to write")
+    ap.add_argument("--pseudo", default="", help="a submission file (output/submission_vN.pt): its masks become the labels of "
+                    "the 1020 test images, added to every epoch (allowed by the organizers, 22 Nov 05:58)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
     torch.manual_seed(0)
@@ -172,16 +183,21 @@ def main():
             ex = np.stack([onehot] * len(z["kinds"])); ex[:, -1] = z["acc"] if "acc" in z else np.where(z["kinds"] == "full", 0.97, 0.53)
             synth[m] = (z["images"], z["masks128"], ex)
         name += f"_{a.synth_set}{a.synth}"
+    per_epoch = {m: a.synth for m in synth}
+    if a.pseudo:
+        synth["pseudo"] = pseudo_set(a.pseudo)
+        per_epoch["pseudo"] = len(synth["pseudo"][0])
+        print(f"+ {per_epoch['pseudo']} test images with the masks of {a.pseudo}", flush=True)
     if a.tag:
         name += "_" + a.tag
-    steps = a.epochs * ((len(tr) + a.synth * len(synth) + a.batch - 1) // a.batch)
+    steps = a.epochs * ((len(tr) + sum(per_epoch.values()) + a.batch - 1) // a.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=steps, pct_start=0.1)
     history, t0 = [], time.time()
     for epoch in range(1, a.epochs + 1):
         model.train()
         order = [(None, i) for i in rng.permutation(tr)]
         for m, (si, _, _) in synth.items():
-            order += [(m, i) for i in rng.choice(len(si), a.synth, replace=False)]
+            order += [(m, i) for i in rng.choice(len(si), per_epoch[m], replace=False)]
         order = [order[k] for k in rng.permutation(len(order))]
         losses = []
         for i in range(0, len(order), a.batch):
