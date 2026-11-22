@@ -52,6 +52,22 @@ One iteration = read results, decide, submit if earned, refill the GPUs, log. Ru
   only if it beats `long` itself under the rule (`--a "synthv3,synthv3b2000_long" --b "synthv3,synthv3b2000_big"`).
 - Reviewer agent (Fable, read-only) started at 03:50 on the stall: underfitting causes, holes, undecodable rectangles.
 
+## Segment snapping (declared 04:20, BEFORE any result)
+Observation on 16 real train images: the object-shaped regions follow the object contours of the image itself (the
+cake, the bear, the runner, the sink), like the masks of a class-agnostic segmenter; type A holes are a mix of such
+segments and small round blobs. Our heads predict blurry patches where a sharp segment should be chosen.
+Test: SAM (ViT-H, automatic masks, external pretrained model, one checkpoint file) proposes segments per image;
+`sam_segments.py` stores them at 128 x 128 with the official downsampling rule.
+- Oracle (diagnostic only, selects nothing): best union of segments against the true mask, per sub-type.
+- Rule `greedy` (the candidate): start from the thresholded prediction; a move sets one whole segment to 1 or to
+  0; apply the move that raises the EXPECTED score most (soft mean IoU of the two classes computed against the
+  probability map itself), repeat until no move raises it by 1e-4, at most 30 moves. No parameter is fitted; cells in
+  no segment keep the raw prediction; accepted rectangles are applied before and stay untouched.
+- Declared variant `vote` (the only one): segments from the largest to the smallest, each set to the majority of
+  its mean probability.
+- Kill by 05:15 if the oracle on type B objects is under 0.85, or if `greedy` gains less than 0.02 on the OOF
+  predictions of the 510 train images. If kept: on/off option in `postproc.py` (nested CV), then SAM on test.
+
 ## Underfitting screen (synth-only gate, fold-free: trained on synthetic only, judged on all 170 real images)
 | Method | 600 per epoch, 40 epochs (reference) | 3000 per epoch `long` | `trunk3` | `big` | `bigtrunk3` |
 |---|---|---|---|---|---|
