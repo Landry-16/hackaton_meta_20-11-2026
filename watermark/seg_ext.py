@@ -6,6 +6,7 @@ the extractor was trained on. One model per method (StegaStamp is ONNX only, see
   quick local check:  python seg_ext.py --method trustmark --fold 0 --epochs 1 --limit 24 --device cpu
   on JURECA:          GPU=1 jureca/run.sh watermark watermark/seg_ext.py --method pixelseal --fold 0"""
 import argparse
+import copy
 import time
 from pathlib import Path
 
@@ -72,26 +73,65 @@ class ExtractorTrunk(nn.Module):
 
 
 class ExtSegmenter(nn.Module):
-    """scales: input sizes as multiples of the extractor resolution, e.g. (1,) or (1, 2): the same trunk sees the image
-    at its working resolution AND larger, so small regions and thin holes keep detail."""
-    def __init__(self, method, wm, extra=1, scales=(1,)):
+    """scales: input sizes as multiples of the extractor resolution, e.g. (1,) or (1, 2).
+    msg: message-aware. `extra` then also carries the message signs (B x (1 + nbits)); a FROZEN copy of the extractor
+    gives its per-position bit logits (8 x 8), and their agreement with the known message becomes three input planes
+    (local agreement, its image mean, PixelSeal detection channel): where the decoder locally reads the right bits."""
+    def __init__(self, method, wm, extra=1, scales=(1,), msg=False):
         super().__init__()
+        self.method, self.msg = method, msg
         self.sizes = [int(RES[method] * s) for s in scales]
         self.trunk = ExtractorTrunk(method, wm)
+        if msg:
+            self.frozen = copy.deepcopy(self.trunk)
+            self.bit_head = copy.deepcopy(wm.det.pixel_decoder if method == "pixelseal" else wm.net.fc)
+            for q in list(self.frozen.parameters()) + list(self.bit_head.parameters()):
+                q.requires_grad_(False)
         self.lat = nn.ModuleList(nn.Conv2d(c, 64, 1) for _ in self.sizes for c in self.trunk.channels)
-        self.head = nn.Sequential(nn.Conv2d(64 * 4 * len(self.sizes) + extra, 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(inplace=True),
+        self.head = nn.Sequential(nn.Conv2d(64 * 4 * len(self.sizes) + extra + (3 if msg else 0), 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(inplace=True),
                                   nn.Conv2d(128, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
                                   nn.Conv2d(64, 1, 1))
 
-    def forward(self, x, extra):                                   # x: B x 3 x 512 x 512 in [0, 1]; extra: B x 1
+    def train(self, mode=True):
+        super().train(mode)
+        if self.msg:                                               # the frozen extractor always runs in eval mode
+            self.frozen.eval(); self.bit_head.eval()
+        return self
+
+    @torch.no_grad()
+    def agreement(self, x, sign):
+        """B x 3 x 128 x 128: local agreement with the message, its mean over the image, detection channel."""
+        last = self.frozen(x)[-1]
+        if self.method == "pixelseal":
+            emb = self.bit_head.output_upscaling(last)
+            lin = self.bit_head.linear
+            pp = torch.einsum("bchw,oc->bohw", emb, lin.weight) + lin.bias[None, :, None, None]
+            det, bits = pp[:, :1], pp[:, 1:]
+        else:
+            bits = torch.einsum("bchw,oc->bohw", last, self.bit_head.weight) + self.bit_head.bias[None, :, None, None]
+            det = torch.zeros_like(bits[:, :1])
+        agree = (bits * sign[:, :, None, None]).mean(1, keepdim=True)
+        up = lambda t: F.interpolate(t.float(), size=(128, 128), mode="bilinear", align_corners=False)
+        return torch.cat([up(agree), agree.mean((2, 3), keepdim=True).float().expand(-1, -1, 128, 128), up(det)], 1) / 5
+
+    def forward(self, x, extra):                                   # x: B x 3 x 512 x 512 in [0, 1]; extra: B x 1 (+ nbits signs)
         ups, k = [], 0
         for size in self.sizes:
             xs = x if size == x.shape[-1] else F.interpolate(x, size=(size, size), mode="bilinear", align_corners=False, antialias=True)
+            if self.msg and size == self.sizes[0]:
+                ups.append(self.agreement(xs, extra[:, 1:]).to(xs.dtype))
             for f in self.trunk(xs):
                 ups.append(F.interpolate(self.lat[k](f), size=(128, 128), mode="bilinear", align_corners=False))
                 k += 1
-        planes = extra[:, :, None, None].expand(-1, -1, 128, 128)
-        return self.head(torch.cat(ups + [planes], 1))[:, 0]
+        planes = extra[:, :1, None, None].expand(-1, -1, 128, 128)
+        return self.head(torch.cat([u.float() for u in ups] + [planes], 1))[:, 0]
+
+
+def message_signs(split, names):
+    """B x nbits array of +1 / -1 for the given image names."""
+    import json
+    meta = {m["image_name"]: m["message"] for m in json.loads((Path("release") / split / "metadata.json").read_text())}
+    return np.array([[1.0 if c == "1" else -1.0 for c in meta[n]] for n in names], np.float32)
 
 
 class CopyPaste:
@@ -146,6 +186,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--synth", type=int, default=0, help="synthetic samples added per epoch (from output/<synth-set>_<method>.npz)")
     ap.add_argument("--synth-set", default="synth", help="synth (v1) or synthv2")
+    ap.add_argument("--msg", action="store_true", help="message-aware: agreement planes from a frozen extractor copy")
     ap.add_argument("--no-real", action="store_true", help="train on synthetic samples only (transfer gate), judge on ALL real images")
     ap.add_argument("--scales", default="1", help="e.g. 1,2: the trunk also sees the image at twice its working resolution")
     ap.add_argument("--copypaste", type=int, default=0, help="real-watermark copy-paste samples per epoch (training fold donors only)")
@@ -159,6 +200,8 @@ def main():
     sel = np.flatnonzero(methods == a.method)
     images, masks, methods, full, extra = images[sel], masks[sel], methods[sel], full[sel], extra[sel][:, -1:]
     names = [names[i] for i in sel]
+    if a.msg:
+        extra = np.concatenate([extra, message_signs("train", names)], 1)
     fold = folds_of(methods, full)
     tr = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold != int(a.fold))
     ev = np.arange(len(images)) if a.fold == "all" else np.flatnonzero(fold == int(a.fold))
@@ -168,9 +211,9 @@ def main():
     print(f"{name}: train {len(tr)} real images, judged on {len(ev)}", flush=True)
 
     wm = load_watermark(a.method, device="cpu") if a.method != "stegastamp" else None
-    model = ExtSegmenter(a.method, wm, scales=tuple(float(v) for v in a.scales.split(","))).to(a.device)
+    model = ExtSegmenter(a.method, wm, scales=tuple(float(v) for v in a.scales.split(",")), msg=a.msg).to(a.device)
     trunk = list(model.trunk.parameters())
-    rest = [p for n, p in model.named_parameters() if not n.startswith("trunk.")]
+    rest = [p for n, p in model.named_parameters() if not n.startswith("trunk.") and p.requires_grad]
     opt = torch.optim.AdamW([{"params": trunk, "lr": a.lr / 10}, {"params": rest, "lr": a.lr}], weight_decay=1e-4)
     steps = a.epochs * ((len(tr) + a.synth + a.copypaste + a.batch - 1) // a.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=[a.lr / 10, a.lr], total_steps=steps, pct_start=0.1)
@@ -178,15 +221,26 @@ def main():
         z = load_synth(a.synth_set, a.method)
         s_img, s_mask = z["images"], z["masks128"]
         s_extra = (z["acc"] if "acc" in z else np.where(z["kinds"] == "full", 0.97, 0.53)).astype(np.float32)[:, None]   # full-image decode
+        if a.msg:
+            s_extra = np.concatenate([s_extra, z["bits"].astype(np.float32) * 2 - 1], 1)
         print(f"+ {a.synth} synthetic samples per epoch out of {len(s_img)}", flush=True)
     if a.copypaste:
         cp = CopyPaste(a.method, images, masks, full, tr, np.random.default_rng(1))
         name += f"_cp{a.copypaste}"
         print(f"+ {a.copypaste} copy-paste samples per epoch, {len(cp.carriers)} clean carriers, {len(cp.donors)} type A donors", flush=True)
+    if a.msg:
+        name += "_msg"
     if a.scales != "1":
         name += "_ms" + a.scales.replace(",", "-").replace(".", "p")
     history, t0, probs = [], time.time(), None
-    for epoch in range(1, a.epochs + 1):
+    resume, first = OUT / f"resume_{name}.pt", 1                   # a job killed to give its GPU back restarts where it was
+    if resume.exists():
+        ck = torch.load(resume, map_location=a.device, weights_only=False)
+        model.load_state_dict(ck["model"]); opt.load_state_dict(ck["opt"]); sched.load_state_dict(ck["sched"])
+        history, first = ck["history"], ck["epoch"] + 1
+        rng = np.random.default_rng(1000 + first)
+        print(f"resumed after epoch {ck['epoch']}", flush=True)
+    for epoch in range(first, a.epochs + 1):
         model.train()
         order = [("real", i) for i in rng.permutation(tr)]
         if a.synth:
@@ -223,8 +277,13 @@ def main():
             print(f"epoch {epoch}/{a.epochs} loss {np.mean(losses):.4f} held-out {overall:.4f} (type A {v[1]:.3f}, type B {v[2]:.3f}) | {time.time() - t0:.0f} s", flush=True)
         else:
             print(f"epoch {epoch}/{a.epochs} loss {np.mean(losses):.4f} | {time.time() - t0:.0f} s", flush=True)
+        if epoch < a.epochs:
+            tmp = resume.with_suffix(".tmp")
+            torch.save({"epoch": epoch, "model": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(), "history": history}, tmp)
+            tmp.rename(resume)
     OUT.mkdir(exist_ok=True)
     torch.save(model.state_dict(), OUT / f"seg{name}.pt")
+    resume.unlink(missing_ok=True)
     if a.fold != "all":
         plots(name, [(h[0], h[1], {m: h[2].get(m, (np.nan,) * 3) for m in ("pixelseal", "trustmark", "stegastamp")}) for h in history],
               images[ev], masks[ev], probs, methods[ev], full[ev])
@@ -232,8 +291,11 @@ def main():
         return
     t_img, _, t_methods, t_extra, _, t_names = load_split("test")
     s = t_methods == a.method
+    t_e = t_extra[s][:, -1:]
+    if a.msg:
+        t_e = np.concatenate([t_e, message_signs("test", [n for n, k in zip(t_names, s) if k])], 1)
     np.savez(OUT / f"seg_probs_{a.method}_test.npz", names=np.array(t_names)[s],
-             probs=predict(model, t_img[s], t_extra[s][:, -1:], a.device).astype(np.float16))
+             probs=predict(model, t_img[s], t_e, a.device).astype(np.float16))
     print("wrote", OUT / f"seg_probs_{a.method}_test.npz", flush=True)
 
 

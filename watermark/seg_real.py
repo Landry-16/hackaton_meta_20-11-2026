@@ -33,6 +33,9 @@ def load_synth(sets, method):
            "kinds": np.concatenate([p["kinds"] for p in parts])}
     if all("acc" in p.files for p in parts):
         out["acc"] = np.concatenate([p["acc"] for p in parts])
+    side = [OUT / f"{s}_{method}_bits.npy" for s in sets.split(",")]           # recover_bits.py
+    if all(f.exists() for f in side):
+        out["bits"] = np.concatenate([np.load(f) for f in side])
     return out
 
 
