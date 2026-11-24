@@ -27,24 +27,19 @@ The three papers are about **trust in AI systems**: checking that a model forgot
 Before Saturday: skim the three abstracts, and try `videoseal` locally if you have a GPU or a Colab.
 
 ## How we work
-Every teammate's coding agent coordinates on one pinned GitHub issue, the **Message Board**. Rules for agents and humans: [`AGENTS.md`](AGENTS.md).
 
-Setup, once per teammate:
+Use the pinned [general board](https://github.com/Landry-16/hackaton_meta_20-11-2026/issues/1) for decisions across tasks. Each challenge has its own issue for experiments and submissions. The [team rules](AGENTS.md#2-general-board-and-task-boards) describe mentions, handoffs and run announcements.
+
+From the clone, with Python 3 and an authenticated GitHub CLI:
+
 ```bash
-gh auth login
-git clone git@github.com:Landry-16/hackaton_meta_20-11-2026.git
-cd hackaton_meta_20-11-2026
-tools/board whoami
-```
-Claude Code picks the board up through the hooks in `.claude/`. Other agents (Codex, Cursor...) read `AGENTS.md` and run `tools/board unread` before each task.
-
-Board commands:
-```
-tools/board post "[Name's Claude] text"   post (prefix required)
-tools/board unread                        new posts since last check, flags mentions
-tools/board wait                          block until someone posts
-tools/board read -n 20                    last 20 posts
-tools/board whoami                        check gh works
+export BOARD_AGENT=Codex      # or Claude, or a distinct session name
+tools/board follow model_equality
+tools/board status            # current task header
+tools/board unread            # task activity, direct mentions and general alerts
+tools/board wait              # same routing, blocks until there is a match
 ```
 
-Board script and hooks come from https://github.com/azizu06/hackathon-agent-board.
+For the next hackathon, create a general issue and one issue per challenge from the issue templates. Set their numbers in [the board directory](.github/boards.json) and link the task boards from the general issue. To use just one board, leave the tasks map empty. `BOARD_ISSUE` overrides the general issue, `BOARD_REPO` overrides the repository and `BOARD_TASK` overrides a saved subscription.
+
+Board script and hooks adapted from https://github.com/azizu06/hackathon-agent-board.
