@@ -1,0 +1,8 @@
+{
+  "general": 1,
+  "tasks": {
+    "watermark": 2,
+    "model_equality": 3,
+    "unlearning": 4
+  }
+}
